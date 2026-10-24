@@ -14,7 +14,7 @@ create extension if not exists pgcrypto;
 -- =========================================================
 create table public.settings (
   id int primary key default 1 check (id = 1),
-  church_name text not null default 'Grace Harvest Chapel',
+  church_name text not null default 'Serious Christian Church',
   momo text not null default '',
   momo_name text not null default '',
   campaign_name text not null default '',

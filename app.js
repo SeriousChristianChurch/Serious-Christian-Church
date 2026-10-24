@@ -111,7 +111,7 @@ let tab = 'home', sheet = null, authMode = 'signin', peopleFilter = 'All', peopl
 let attGroup = null, attDraft = null, confirmKey = null, installEvt = null, creatingProfile = false, recovery = false, authNotice = '';
 
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (S.profile) render(); });
-window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Open The Art of Shepherding from your home screen.'); if (S.profile) render(); });
+window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Open Serious Christian Church from your home screen.'); if (S.profile) render(); });
 try { const t = localStorage.getItem('shepherd-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 
 const me = () => S.profile;
@@ -331,7 +331,7 @@ function setupScreen() {
 function loginScreen() {
   const up = authMode === 'signup';
   return `<main class="login">
-    <div class="brand"><div class="brand-mark">${ic('church')}</div><div class="stack"><span class="eyebrow gold">${esc(churchName())}</span><strong style="font-family:var(--display);font-size:20px;line-height:1.2">The Art of Shepherding</strong></div></div>
+    <div class="brand"><div class="brand-mark">${ic('church')}</div><div class="stack"><span class="eyebrow gold">Church app</span><strong style="font-family:var(--display);font-size:20px;line-height:1.2">${esc(churchName())}</strong></div></div>
     <div class="stack" style="gap:8px"><h1>${up ? 'Create your account' : 'Sign in to your ministry'}</h1><p class="muted">Your home screen, reports and tools are set up for your role in the church.</p></div>
     <div class="seg" role="group" aria-label="Sign in or create account"><button data-auth="signin" aria-pressed="${!up}">Sign in</button><button data-auth="signup" aria-pressed="${up}">Create account</button></div>
     ${authNotice ? `<div class="alert" role="status"><strong>Check your email</strong><span class="small">${esc(authNotice)}</span></div>` : ''}
@@ -374,7 +374,7 @@ function installCard() {
   if (isStandalone() || installLater() || (!installEvt && !isPhone)) return '';
   const later = '<button class="btn sm ghost" data-act="installLater">Not now</button>';
   if (installEvt) {
-    return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('download')}</div><div class="stack grow"><strong>Install The Art of Shepherding</strong><span class="small muted">Open it from your home screen like any other app.</span></div></div>
+    return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('download')}</div><div class="stack grow"><strong>Install the church app</strong><span class="small muted">Open it from your home screen like any other app.</span></div></div>
       <div class="row" style="gap:8px"><button class="btn" data-act="install">${ic('download')} Install app</button>${later}</div></section>`;
   }
   const steps = isIOS

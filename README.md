@@ -1,4 +1,4 @@
-# The Art of Shepherding
+# Serious Christian Church app
 
 A church app people install on their phones. Everyone signs in with their own account and gets a home screen for their role:
 
