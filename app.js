@@ -32,7 +32,8 @@ const P = {
   talk:'<path d="M3.5 4.5h12v9h-7l-5 3.5z"/><path d="M18.5 9h2v10l-3.5-2.5H11v-3"/>',
   bible:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M12 7v7M9.5 9.5h5"/>',
   gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
-  download:'<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>'
+  download:'<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>',
+  share:'<path d="M12 15V3M8 7l4-4 4 4"/><path d="M5 11v9h14v-9"/>'
 };
 const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
@@ -109,7 +110,8 @@ const S = {
 let tab = 'home', sheet = null, authMode = 'signin', peopleFilter = 'All', peopleQuery = '', guideQuery = '', boardFilter = 'All';
 let attGroup = null, attDraft = null, confirmKey = null, installEvt = null, creatingProfile = false, recovery = false, authNotice = '';
 
-window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (S.profile) render(); });
+window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Open Shepherd from your home screen.'); if (S.profile) render(); });
 try { const t = localStorage.getItem('shepherd-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 
 const me = () => S.profile;
@@ -360,11 +362,31 @@ function profileSetupScreen() {
 }
 
 /* ---------- screens: home & mission ---------- */
+/* ---------- install prompt ---------- */
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isPhone = isIOS || /android/i.test(navigator.userAgent);
+function installLater() { try { return localStorage.getItem('shepherd-install-later') === todayKey(); } catch (e) { return false; } }
+function installCard() {
+  if (isStandalone() || installLater() || (!installEvt && !isPhone)) return '';
+  const later = '<button class="btn sm ghost" data-act="installLater">Not now</button>';
+  if (installEvt) {
+    return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('download')}</div><div class="stack grow"><strong>Install Shepherd on this phone</strong><span class="small muted">Open it from your home screen like any other app.</span></div></div>
+      <div class="row" style="gap:8px"><button class="btn" data-act="install">${ic('download')} Install app</button>${later}</div></section>`;
+  }
+  const steps = isIOS
+    ? `<li><span class="dot"></span><span>Tap the <strong>Share</strong> button ${ic('share')} at the bottom of Safari.</span></li><li><span class="dot"></span><span>Scroll down and tap <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</span></li>`
+    : `<li><span class="dot"></span><span>Tap the browser menu <strong>⋮</strong> at the top right.</span></li><li><span class="dot"></span><span>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong>.</span></li>`;
+  return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('download')}</div><div class="stack grow"><strong>Add Shepherd to your home screen</strong><span class="small muted">So it opens like an app, full screen.</span></div></div>
+    <ul class="todo">${steps}</ul><div>${later}</div></section>`;
+}
+
 function hubScreen() {
   const p = me(); const first = p.name.split(' ')[0];
   const t = tasksFor(p), d = dayDoc(), done = t.filter(x => (d.done || []).includes(x.id)).length;
   const pendingAtt = p.role === 'member' ? [] : myGroups().filter(g => !attendanceFor(g));
   return `<div class="stack" style="gap:4px"><h1>${greeting()}, ${esc(first)}</h1><p class="muted small">${p.role === 'member' ? 'How is your walk with God today?' : 'What ministry would you like to focus on today?'}</p></div>
+    ${installCard()}
     ${verseCard()}
     <section class="card"><div class="row between"><h2>Today with God</h2><span class="pill ${done === t.length ? 'ok' : ''}">${done}/${t.length} done</span></div>
       <div class="progress"><i style="width:${Math.round(done / t.length * 100)}%;background:var(--green)"></i></div>
@@ -672,7 +694,7 @@ function moreScreen() {
     ? [['devotion', 'Daily devotion', 'bible'], ['board', 'Ask & Share', 'talk'], ['prayer', 'Prayer wall', 'msg'], ['sermons', 'Sermon notes', 'book'], ['events', 'Events', 'cal'], ['progress', 'My progress', 'target'], ['giving', 'Giving', 'heart'], ['announcements', 'Announcements', 'bell'], ['guide', 'Field guide', 'book']]
     : [['devotion', 'Daily devotion', 'bible'], ['board', 'Ask & Share', 'talk'], ['prayer', 'Prayer wall', 'msg'], ['sermons', 'Sermon notes', 'book'], ['announcements', 'Announcements', 'bell'], ['attendance', 'Church attendance', 'clip'], [p.role === 'pastor' ? 'reports' : 'report', 'Reports', 'file'], ['health', 'Ministry health', 'chart'], ['events', 'Events', 'cal'], ['giving', 'Giving', 'heart'], ['progress', 'My progress', 'target'], ['guide', 'Field guide', 'book']];
   if (p.role === 'pastor') links.unshift(['admin', 'Church admin', 'gear']);
-  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches;
+  const ios = isIOS && !isStandalone();
   return `${header('More')}
     <section class="card"><div class="row"><div class="avatar" style="width:52px;height:52px;font-size:16px">${initials(p.name)}</div><div class="stack grow"><strong style="font-size:17px">${esc(p.name)}</strong><span class="small muted">${ROLE_LABEL[p.role]}${p.group ? ' · ' + esc(groupName(p.group)) : ''}</span><span class="small muted">${esc(p.email || S.user.email)}</span></div><button class="btn sm ghost" data-sheet="profile">Edit</button></div></section>
     ${installEvt ? `<button class="btn" data-act="install">${ic('download')} Install the app on this phone</button>` : ios ? '<section class="card"><strong>Install on iPhone</strong><span class="small muted">Tap the Share button in Safari, then “Add to Home Screen”.</span></section>' : ''}
@@ -881,7 +903,8 @@ root.addEventListener('click', async e => {
       const email = val('au-email'); if (!email) return showErr('au-err', 'Type your email above, then tap “Forgot your password?” again.');
       return run(sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname }), 'Password reset email sent. Check your inbox.');
     }
-    case 'install': installEvt.prompt(); installEvt = null; return;
+    case 'install': { const evt = installEvt; installEvt = null; await evt.prompt(); const c = await evt.userChoice.catch(() => null); if (c?.outcome !== 'accepted') installEvt = evt; return render(); }
+    case 'installLater': try { localStorage.setItem('shepherd-install-later', todayKey()); } catch (err) {} return render();
     case 'theme': {
       const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
       const next = cur === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next;
