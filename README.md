@@ -1,4 +1,4 @@
-# Shepherd Church App
+# The Art of Shepherding
 
 A church app people install on their phones. Everyone signs in with their own account and gets a home screen for their role:
 

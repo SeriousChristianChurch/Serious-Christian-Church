@@ -1,6 +1,6 @@
 {
-  "name": "Shepherd Church App",
-  "short_name": "Shepherd",
+  "name": "The Art of Shepherding",
+  "short_name": "Shepherding",
   "description": "Devotion, attendance, reports, prayer and church news.",
   "start_url": "./",
   "scope": "./",

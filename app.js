@@ -111,7 +111,7 @@ let tab = 'home', sheet = null, authMode = 'signin', peopleFilter = 'All', peopl
 let attGroup = null, attDraft = null, confirmKey = null, installEvt = null, creatingProfile = false, recovery = false, authNotice = '';
 
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (S.profile) render(); });
-window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Open Shepherd from your home screen.'); if (S.profile) render(); });
+window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Open The Art of Shepherding from your home screen.'); if (S.profile) render(); });
 try { const t = localStorage.getItem('shepherd-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 
 const me = () => S.profile;
@@ -325,13 +325,13 @@ function taskList(p) {
 const credit = '<p class="small muted" style="text-align:center">Designed by Axe Connect</p>';
 
 function setupScreen() {
-  return `<main class="login"><div class="brand"><div class="brand-mark">${ic('church')}</div><strong style="font-size:18px">Shepherd</strong></div>
+  return `<main class="login"><div class="brand"><div class="brand-mark">${ic('church')}</div><strong style="font-family:var(--display);font-size:20px;line-height:1.2">The Art of Shepherding</strong></div>
     <section class="card"><h2>Connect Supabase to finish setup</h2><p class="muted">Open <code>config.js</code> and paste your Supabase project URL and publishable key. The README explains each step.</p></section></main>`;
 }
 function loginScreen() {
   const up = authMode === 'signup';
   return `<main class="login">
-    <div class="brand"><div class="brand-mark">${ic('church')}</div><div class="stack"><span class="eyebrow gold">${esc(churchName())}</span><strong style="font-size:18px">Shepherd</strong></div></div>
+    <div class="brand"><div class="brand-mark">${ic('church')}</div><div class="stack"><span class="eyebrow gold">${esc(churchName())}</span><strong style="font-family:var(--display);font-size:20px;line-height:1.2">The Art of Shepherding</strong></div></div>
     <div class="stack" style="gap:8px"><h1>${up ? 'Create your account' : 'Sign in to your ministry'}</h1><p class="muted">Your home screen, reports and tools are set up for your role in the church.</p></div>
     <div class="seg" role="group" aria-label="Sign in or create account"><button data-auth="signin" aria-pressed="${!up}">Sign in</button><button data-auth="signup" aria-pressed="${up}">Create account</button></div>
     ${authNotice ? `<div class="alert" role="status"><strong>Check your email</strong><span class="small">${esc(authNotice)}</span></div>` : ''}
@@ -374,13 +374,13 @@ function installCard() {
   if (isStandalone() || installLater() || (!installEvt && !isPhone)) return '';
   const later = '<button class="btn sm ghost" data-act="installLater">Not now</button>';
   if (installEvt) {
-    return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('download')}</div><div class="stack grow"><strong>Install Shepherd on this phone</strong><span class="small muted">Open it from your home screen like any other app.</span></div></div>
+    return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('download')}</div><div class="stack grow"><strong>Install The Art of Shepherding</strong><span class="small muted">Open it from your home screen like any other app.</span></div></div>
       <div class="row" style="gap:8px"><button class="btn" data-act="install">${ic('download')} Install app</button>${later}</div></section>`;
   }
   const steps = isIOS
     ? `<li><span class="dot"></span><span>Tap the <strong>Share</strong> button ${ic('share')} at the bottom of Safari.</span></li><li><span class="dot"></span><span>Scroll down and tap <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</span></li>`
     : `<li><span class="dot"></span><span>Tap the browser menu <strong>⋮</strong> at the top right.</span></li><li><span class="dot"></span><span>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong>.</span></li>`;
-  return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('download')}</div><div class="stack grow"><strong>Add Shepherd to your home screen</strong><span class="small muted">So it opens like an app, full screen.</span></div></div>
+  return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('download')}</div><div class="stack grow"><strong>Add the app to your home screen</strong><span class="small muted">So it opens like an app, full screen.</span></div></div>
     <ul class="todo">${steps}</ul><div>${later}</div></section>`;
 }
 
