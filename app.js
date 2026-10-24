@@ -322,6 +322,8 @@ function taskList(p) {
 }
 
 /* ---------- screens: auth ---------- */
+const credit = '<p class="small muted" style="text-align:center">Designed by Axe Connect</p>';
+
 function setupScreen() {
   return `<main class="login"><div class="brand"><div class="brand-mark">${ic('church')}</div><strong style="font-size:18px">Shepherd</strong></div>
     <section class="card"><h2>Connect Supabase to finish setup</h2><p class="muted">Open <code>config.js</code> and paste your Supabase project URL and publishable key. The README explains each step.</p></section></main>`;
@@ -344,6 +346,7 @@ function loginScreen() {
       ${up ? '' : '<button type="button" class="link" data-act="forgot">Forgot your password?</button>'}
     </form>
     ${up ? '<p class="small muted">New accounts join as members. Your pastor can make you a leader.</p>' : ''}
+    ${credit}
   </main>`;
 }
 function newPasswordScreen() {
@@ -703,7 +706,8 @@ function moreScreen() {
       <button class="li" data-act="theme">${ic('sun')}<span class="grow">Switch light / dark</span></button>
       <button class="li danger" data-act="logout">${ic('out')}<span class="grow">Sign out</span></button>
     </div></section>
-    <section class="card"><h2>Delete account</h2><p class="small muted">Removes your profile, devotion history, notes and giving record. Anonymous posts stay anonymous.</p><div>${delBtn('account', 'Delete my account')}</div></section>`;
+    <section class="card"><h2>Delete account</h2><p class="small muted">Removes your profile, devotion history, notes and giving record. Anonymous posts stay anonymous.</p><div>${delBtn('account', 'Delete my account')}</div></section>
+    ${credit}`;
 }
 
 /* ---------- sheets ---------- */
