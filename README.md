@@ -26,7 +26,7 @@ In Supabase, open **Authentication**:
 1. **Turn off email confirmation (recommended).** Go to **Sign In / Providers → Email** and switch off **Confirm email**, then save.
    Supabase's free email service only sends a few emails per hour. With confirmation on, many people signing up on the same Sunday would not receive their link.
 2. **Allow your app's address.** Go to **URL Configuration**:
-   - set **Site URL** to `https://gracechapelchurch.github.io/gracechapelchurch/`
+   - set **Site URL** to `https://seriouschristianchurch.github.io/Serious-Christian-Church/`
    - add the same address under **Redirect URLs**
 
    This makes "Forgot your password?" emails open your app.
@@ -40,7 +40,7 @@ In Supabase, open **Authentication**:
 ## Step 4: The app online (GitHub Pages)
 
 This repository is published with GitHub Pages: **Settings → Pages → Deploy from a branch → `main` / root**.
-The app's address is **https://gracechapelchurch.github.io/gracechapelchurch/**.
+The app's address is **https://seriouschristianchurch.github.io/Serious-Christian-Church/**.
 
 Every change pushed to `main` goes live within a minute or two. To edit a file on GitHub, open it, click the pencil icon, and commit.
 
