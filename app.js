@@ -325,7 +325,7 @@ function taskList(p) {
 const credit = '<p class="small muted" style="text-align:center">Designed by Axe Connect</p>';
 
 function setupScreen() {
-  return `<main class="login"><div class="brand"><div class="brand-mark">${ic('church')}</div><strong style="font-family:var(--display);font-size:20px;line-height:1.2">The Art of Shepherding</strong></div>
+  return `<main class="login"><div class="brand"><div class="brand-mark">${ic('church')}</div><strong style="font-family:var(--display);font-size:20px;line-height:1.2">Serious Christian Church</strong></div>
     <section class="card"><h2>Connect Supabase to finish setup</h2><p class="muted">Open <code>config.js</code> and paste your Supabase project URL and publishable key. The README explains each step.</p></section></main>`;
 }
 function loginScreen() {
