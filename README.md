@@ -16,6 +16,7 @@ It runs on **Supabase** (database and sign-in) and **GitHub Pages** (the website
 2. Click **SQL Editor** in the left menu, then **New query**.
 3. Open the file `supabase/schema.sql` from this folder, copy **all** of it, and paste it into the editor.
 4. Click **Run**. You should see "Success. No rows returned".
+5. Then open a **new, empty** query, paste all of `supabase/prayer-update.sql`, and click **Run**. This adds prayer meetings, the prayer report and app time.
 
 This creates every table and the security rules that control who can see what.
 
@@ -72,6 +73,15 @@ Share the app link (WhatsApp works well).
 
 It gets its own icon, opens full screen, and updates live when leaders and the pastor make changes.
 
+## Prayer meetings and the prayer report
+
+- **Set a meeting:** Prayer meetings → **Set a prayer meeting**. Choose the name, start time, how long, which days, who should pray (everyone or one bacenta), and optional prayer points. Leaders can set meetings for their own bacenta.
+- **During the meeting:** everyone it's for sees **"Prayer meeting is on now · Join prayer"** at the top of their Home screen. Joining opens the prayer room, which counts how long they stay. They can join from 5 minutes before the start until the end.
+- **Who joined:** Prayer meetings → **Who joined** shows, for each day, who joined (time and minutes) and who didn't.
+- **Prayer report:** shows, week by week, a graph of who prayed and who didn't, minutes spent in prayer, and for each person: meetings joined, days they ticked "Pray", and time spent in the app. "Prayed" means they joined a meeting or ticked "Pray" that week. People are only counted from the week they created their account.
+- **Reminders:** "Add to my calendar" puts the meeting in the phone's calendar with a reminder 10 minutes before.
+- The pastor sees everyone; a leader sees their own bacenta. Members are told this in the prayer room and on the More screen.
+
 ## Who can see what
 
 These rules are enforced by the database itself (Row Level Security in `schema.sql`), not just hidden in the app:
@@ -86,6 +96,7 @@ These rules are enforced by the database itself (Row Level Security in `schema.s
 | Who wrote an Ask & Share post | Only the author |
 | Private messages to an anonymous poster | Only the author of that post |
 | Devotion history, journal, sermon notes, giving record | Only the person themselves |
+| Prayer meeting check-ins, days ticked "Pray", time in the app | The person, their bacenta leader, and the pastor (journals stay private) |
 | Roles and bacenta assignments | Only the pastor can change them |
 
 ## Everyday jobs
@@ -113,4 +124,5 @@ manifest.webmanifest     install settings (name, icon, colours)
 sw.js                    offline support
 icons/                   app icons
 supabase/schema.sql      database tables and security rules (run once in SQL Editor)
+supabase/prayer-update.sql  prayer meetings, prayer report, app time (run once, after schema.sql)
 ```

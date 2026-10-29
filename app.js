@@ -105,10 +105,11 @@ const sb = configured ? createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persi
 const S = {
   user: null, profile: null, profileLoaded: false, settings: {}, groups: [], members: [], attendance: [], reports: [],
   announcements: [], events: [], prayers: [], sermons: [], followups: [], board: [], replies: [], myPosts: [], priv: {},
-  days: [], giving: [], notes: [], users: [], flags: []
+  days: [], giving: [], notes: [], users: [], flags: [], meetings: [], myCheckins: [], prayerStats: []
 };
 let tab = 'home', sheet = null, authMode = 'signin', peopleFilter = 'All', peopleQuery = '', guideQuery = '', boardFilter = 'All';
 let attGroup = null, attDraft = null, confirmKey = null, installEvt = null, creatingProfile = false, recovery = false, authNotice = '';
+let prayRoom = null, prayerSecs = 0, reportWeek = 0;
 
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (S.profile) render(); });
 window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Open Serious Christian Church from your home screen.'); if (S.profile) render(); });
@@ -162,9 +163,20 @@ const LOADERS = {
   flags: async () => { S.flags = me()?.role === 'pastor' ? (await rows('flags')).map(f => ({ id: f.id, postId: f.post_id, reason: f.reason })) : []; },
   days: async () => { S.days = (await rows('days', q => q.gte('date', dayKey(-60)))).map(d => ({ id: d.date, done: d.done || [], journal: d.journal || '' })); },
   giving: async () => { S.giving = (await rows('giving')).map(g => ({ ...g, amount: Number(g.amount), date: String(g.date).slice(0, 10) })); },
-  notes: async () => { S.notes = (await rows('sermon_notes')).map(n => ({ id: n.sermon_id, text: n.text })); }
+  notes: async () => { S.notes = (await rows('sermon_notes')).map(n => ({ id: n.sermon_id, text: n.text })); },
+  meetings: async () => {
+    S.meetings = (await rows('prayer_meetings')).map(m => ({ id: m.id, title: m.title, start: String(m.start_time).slice(0, 5), duration: m.duration_min, days: m.days || [],
+      audience: m.audience, points: m.points || '', active: m.active, createdBy: m.created_by, createdAt: String(m.created_at).slice(0, 10) }));
+  },
+  myCheckins: async () => { S.myCheckins = (await rows('prayer_checkins', q => q.eq('uid', uid()).gte('date', dayKey(-35)))).map(c => ({ meeting: c.meeting_id, date: String(c.date).slice(0, 10), seconds: c.seconds })); },
+  prayerStats: async () => {
+    if (!isStaffRole()) { S.prayerStats = []; return; }
+    const { data, error } = await sb.rpc('prayer_stats', { p_weeks: 4 });
+    if (error) console.warn('prayer_stats', error.message);
+    S.prayerStats = (data || []).map(r => ({ ...r, week_start: String(r.week_start).slice(0, 10) }));
+  }
 };
-const SIGNED_IN_KEYS = ['settings', 'groups', 'users', 'members', 'followups', 'attendance', 'reports', 'announcements', 'events', 'sermons', 'prayers', 'board', 'flags', 'days', 'giving', 'notes'];
+const SIGNED_IN_KEYS = ['settings', 'groups', 'users', 'members', 'followups', 'attendance', 'reports', 'announcements', 'events', 'sermons', 'prayers', 'board', 'flags', 'days', 'giving', 'notes', 'meetings', 'myCheckins', 'prayerStats'];
 async function loadAll() { await Promise.all(SIGNED_IN_KEYS.map(k => LOADERS[k]().catch(e => console.warn(k, e)))); }
 async function reload(...keys) { await Promise.all(keys.map(k => LOADERS[k]().catch(e => console.warn(k, e)))); render(); }
 
@@ -173,7 +185,7 @@ const TABLE_KEYS = {
   settings: ['settings'], groups: ['groups'], profiles: ['profile', 'users'], members: ['members'], followups: ['followups'],
   attendance: ['attendance'], reports: ['reports'], announcements: ['announcements'], events: ['events'], sermons: ['sermons'],
   prayers: ['prayers'], board: ['board'], board_owners: ['board'], board_replies: ['board'], flags: ['flags'], days: ['days'],
-  giving: ['giving'], sermon_notes: ['notes']
+  giving: ['giving'], sermon_notes: ['notes'], prayer_meetings: ['meetings', 'prayerStats'], prayer_checkins: ['myCheckins', 'prayerStats']
 };
 let channel = null, liveTimer = null; const pendingKeys = new Set();
 function scheduleReload(keys) {
@@ -194,13 +206,13 @@ async function onSession(session) {
   const user = session?.user || null;
   if ((user?.id || null) === sessionUid) { S.user = user; return; }
   sessionUid = user?.id || null; stopRealtime();
-  Object.assign(S, { user, profile: null, profileLoaded: false, members: [], attendance: [], reports: [], announcements: [], events: [], prayers: [], sermons: [], followups: [], board: [], replies: [], myPosts: [], priv: {}, days: [], giving: [], notes: [], users: [], flags: [] });
+  Object.assign(S, { user, profile: null, profileLoaded: false, meetings: [], myCheckins: [], prayerStats: [], members: [], attendance: [], reports: [], announcements: [], events: [], prayers: [], sermons: [], followups: [], board: [], replies: [], myPosts: [], priv: {}, days: [], giving: [], notes: [], users: [], flags: [] });
   if (!user) { tab = 'home'; sheet = null; render(); return; }
   authNotice = ''; render();
   await LOADERS.profile();
   S.profileLoaded = true;
   if (S.profile) {
-    await loadAll(); startRealtime();
+    await loadAll(); startRealtime(); trackUsage();
     if (localSeen() !== todayKey()) sheet = { type: 'verse' };
   }
   render();
@@ -215,6 +227,30 @@ if (configured) {
 }
 function localSeen() { try { return localStorage.getItem('shepherd-verse-' + uid()); } catch (e) { return null; } }
 function markVerseSeen() { try { localStorage.setItem('shepherd-verse-' + uid(), todayKey()); } catch (e) {} }
+
+/* ---------- app time and prayer room heartbeat ---------- */
+// The server measures the time between heartbeats, so the phone cannot inflate it.
+function trackUsage() { if (S.profile && document.visibilityState === 'visible') sb.rpc('track_usage').then(() => {}, () => {}); }
+async function prayerBeat() {
+  if (tab !== 'prayroom' || !prayRoom || document.visibilityState !== 'visible') return;
+  if (liveMeeting()?.id !== prayRoom) return render();
+  const { data, error } = await sb.rpc('prayer_heartbeat', { m: prayRoom });
+  if (error) { toast(error.message.includes('not on right now') ? 'This prayer meeting has ended.' : errMsg(error)); return render(); }
+  if (typeof data === 'number') prayerSecs = Math.max(prayerSecs, data);
+}
+setInterval(() => { trackUsage(); prayerBeat(); }, 30000);
+setInterval(() => {
+  if (tab !== 'prayroom' || !prayRoom || document.visibilityState !== 'visible' || liveMeeting()?.id !== prayRoom) return;
+  prayerSecs++; const el = document.getElementById('pray-timer'); if (el) el.textContent = clock(prayerSecs);
+}, 1000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { trackUsage(); prayerBeat(); } });
+async function joinPrayer(id) {
+  prayRoom = id; const before = S.myCheckins.find(c => c.meeting === id && c.date === todayKey());
+  prayerSecs = before?.seconds || 0; go('prayroom');
+  const { data, error } = await sb.rpc('prayer_heartbeat', { m: id });
+  if (error) { toast(error.message.includes('not on right now') ? 'This prayer meeting is not on right now.' : errMsg(error)); return; }
+  prayerSecs = Math.max(prayerSecs, data || 0); toast('You joined the prayer meeting 🙏'); reload('myCheckins');
+}
 
 /* ---------- feedback ---------- */
 let toastTimer;
@@ -244,7 +280,11 @@ async function run(promise, ok, ...keys) {
 }
 function showErr(id, msg) { const e = document.getElementById(id); if (e) { e.textContent = msg; e.hidden = false; } }
 const clearDrafts = () => root.querySelectorAll('[data-dirty]').forEach(el => delete el.dataset.dirty);
-function go(t) { clearDrafts(); tab = t; sheet = null; confirmKey = null; render(); window.scrollTo(0, 0); }
+function go(t) {
+  clearDrafts(); tab = t; sheet = null; confirmKey = null; render(); window.scrollTo(0, 0);
+  // Prayer numbers come from other people's phones, so fetch them fresh when the report is opened.
+  if (['prayerreport', 'mission', 'meetings'].includes(t) && S.profile) reload('prayerStats', 'meetings');
+}
 function openSheet(s) { root.querySelectorAll('.sheet [data-dirty]').forEach(el => delete el.dataset.dirty); sheet = s; confirmKey = null; render(); }
 
 const TABS = {
@@ -384,11 +424,155 @@ function installCard() {
     <ul class="todo">${steps}</ul><div>${later}</div></section>`;
 }
 
+/* ---------- prayer meetings ---------- */
+const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const mins = s => Math.round((s || 0) / 60);
+const durLabel = s => { const m = mins(s); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m} min`; };
+const clock = s => s >= 3600 ? `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+const fmtTime = d => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+const daysLabel = days => days.length === 7 ? 'Every day' : days.length === 5 && [1, 2, 3, 4, 5].every(x => days.includes(x)) ? 'Weekdays' : days.slice().sort().map(x => DAY_SHORT[x]).join(', ');
+function weekStartKey(d = new Date()) { const x = new Date(d); x.setDate(x.getDate() - (x.getDay() + 6) % 7); return ymd(x); }
+function weekLabel(w) { const a = new Date(w + 'T12:00:00'), b = new Date(a); b.setDate(b.getDate() + 6); const f = x => x.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); return `${f(a)} – ${f(b)}`; }
+const weekTick = w => weekShort(isoWeek(new Date(w + 'T12:00:00')));
+const canManage = m => me().role === 'pastor' || m.createdBy === uid();
+const forPerson = (m, group) => m.audience === 'all' || m.audience === group;
+const myMeetings = () => S.meetings.filter(m => m.active && (forPerson(m, me().group) || me().role === 'pastor' || m.createdBy === uid()));
+function meetingWindow(m, day = new Date()) { const [h, mi] = m.start.split(':').map(Number); const s = new Date(day); s.setHours(h, mi, 0, 0); return { s, e: new Date(s.getTime() + m.duration * 60000) }; }
+function liveMeeting() {
+  const now = new Date();
+  return myMeetings().find(m => { if (!m.days.includes(now.getDay())) return false; const { s, e } = meetingWindow(m, now); return now >= new Date(s.getTime() - 5 * 60000) && now <= e; });
+}
+function nextOccurrence(m) {
+  const now = new Date();
+  for (let i = 0; i < 8; i++) { const d = new Date(now); d.setDate(d.getDate() + i); if (!m.days.includes(d.getDay())) continue; const w = meetingWindow(m, d); if (w.e > now) return w; }
+  return null;
+}
+// How many meetings a person was expected at in a week (only those that have already started).
+function expectedMeetings(group, weekStart, list = S.meetings) {
+  const now = new Date(); let n = 0;
+  list.filter(m => m.active && forPerson(m, group)).forEach(m => {
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart + 'T12:00:00'); d.setDate(d.getDate() + i);
+      if (m.days.includes(d.getDay()) && ymd(d) >= m.createdAt && meetingWindow(m, d).s <= now) n++;
+    }
+  });
+  return n;
+}
+const prayedIn = r => r.prayed_days > 0 || r.meetings_attended > 0;
+function barsFor(vals, labels, color) {
+  const max = Math.max(...vals, 1);
+  return `<div class="chart">${vals.map(v => `<div class="bar-col"><span class="bar-val">${v ? v.toLocaleString() : '–'}</span><div class="bar" style="height:${Math.round(v / max * 85)}%;background:var(${color})"></div></div>`).join('')}</div>
+    <div class="chart-x">${labels.map(l => `<span>${l}</span>`).join('')}</div>`;
+}
+function stackBars(pairs, labels, colors) {
+  const max = Math.max(...pairs.map(p => p[0] + p[1]), 1);
+  return `<div class="chart">${pairs.map(p => { const t = p[0] + p[1]; return `<div class="bar-col"><span class="bar-val">${t ? `${p[0]} of ${t}` : '–'}</span><div class="stack-bar" style="height:${Math.round(t / max * 85)}%">${p.map((v, i) => v ? `<i style="flex:${v};background:var(${colors[i]})"></i>` : '').join('')}</div></div>`; }).join('')}</div>
+    <div class="chart-x">${labels.map(l => `<span>${l}</span>`).join('')}</div>`;
+}
+function prayerMeetingCard() {
+  const live = liveMeeting();
+  if (live) {
+    const joined = S.myCheckins.some(c => c.meeting === live.id && c.date === todayKey());
+    return `<section class="card pray-live"><div class="row"><span class="live-dot" aria-hidden="true"></span><div class="stack grow"><span class="eyebrow gold">Prayer meeting is on now</span><strong style="font-size:18px">${esc(live.title)}</strong><span class="small muted">Until ${fmtTime(meetingWindow(live).e)}${joined ? ' · you joined' : ''}</span></div></div>
+      <button class="btn block" data-join="${live.id}">${joined ? 'Go back to prayer' : 'Join prayer'}</button></section>`;
+  }
+  const next = myMeetings().map(m => ({ m, o: nextOccurrence(m) })).filter(x => x.o).sort((a, b) => a.o.s - b.o.s)[0];
+  if (!next) return '';
+  const today = next.o.s.toDateString() === new Date().toDateString();
+  return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('msg')}</div><div class="stack grow"><span class="eyebrow">Next prayer meeting</span><strong>${esc(next.m.title)}</strong><span class="small muted">${today ? 'Today' : next.o.s.toLocaleDateString('en-GB', { weekday: 'long' })} at ${fmtTime(next.o.s)} · open the app then and tap Join</span></div><button class="btn sm ghost" data-go="meetings">Details</button></div></section>`;
+}
+function meetingsScreen() {
+  const p = me(); const staff = p.role !== 'member'; const wk = weekStartKey();
+  const list = (staff ? S.meetings : myMeetings()).slice().sort((a, b) => a.start.localeCompare(b.start));
+  return `${header('Prayer meetings', 'home')}
+    ${prayerMeetingCard()}
+    ${staff ? `<button class="btn" data-sheet="meeting">${ic('plus')} Set a prayer meeting</button>` : ''}
+    ${list.map(m => {
+      const o = nextOccurrence(m); const mine = S.myCheckins.filter(c => c.meeting === m.id && c.date >= wk).length; const exp = expectedMeetings(p.group, wk, [m]);
+      return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('msg')}</div><div class="stack grow"><strong>${esc(m.title)}</strong><span class="small muted">${daysLabel(m.days)} · ${m.start} · ${durLabel(m.duration * 60)}${m.audience !== 'all' ? ' · ' + esc(groupName(m.audience)) : ' · Everyone'}</span>${m.active && o ? `<span class="small muted">Next: ${o.s.toDateString() === new Date().toDateString() ? 'today' : o.s.toLocaleDateString('en-GB', { weekday: 'long' })} at ${fmtTime(o.s)}</span>` : ''}</div>${m.active ? '' : '<span class="pill">Paused</span>'}</div>
+        ${exp || mine ? `<span class="small">You joined <strong>${mine}</strong> of ${Math.max(exp, mine)} this week</span>` : ''}
+        <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn sm ghost" data-ics="${m.id}">Add to my calendar</button>
+        ${staff ? `<button class="btn sm" data-mreport="${m.id}">Who joined</button>` : ''}
+        ${staff && canManage(m) ? `<button class="btn sm ghost" data-pause="${m.id}">${m.active ? 'Pause' : 'Resume'}</button>${delBtn('meeting:' + m.id)}` : ''}</div></section>`;
+    }).join('') || empty(staff ? 'No prayer meetings yet. Set one so the church can pray together.' : 'No prayer meetings have been set yet.')}
+    <p class="small muted">When a meeting is on, open the app and tap <strong>Join prayer</strong>. Your pastor and bacenta leader can see who joined and for how long. “Add to my calendar” sets a reminder 10 minutes before.</p>`;
+}
+function prayRoomScreen() {
+  const m = S.meetings.find(x => x.id === prayRoom);
+  if (!m) return `${header('Prayer room', 'home')}${empty('This prayer meeting is no longer available.')}`;
+  const live = liveMeeting()?.id === m.id;
+  return `${header(m.title, 'home')}
+    <section class="card verse" style="align-items:center;text-align:center">
+      <span class="eyebrow gold">${live ? 'You are in the prayer meeting' : 'This prayer meeting has ended'}</span>
+      <b id="pray-timer" class="num" style="font-size:46px;font-family:var(--display);line-height:1.1">${clock(prayerSecs)}</b>
+      <span class="small muted">${live ? `Your time in prayer · ends at ${fmtTime(meetingWindow(m).e)}` : `You prayed for ${durLabel(prayerSecs)}. God bless you.`}</span></section>
+    ${m.points.trim() ? `<section class="card"><h2>Prayer points</h2><ul class="todo">${m.points.split('\n').map(x => x.trim()).filter(Boolean).map(x => `<li><span class="dot"></span><span>${esc(x)}</span></li>`).join('')}</ul></section>` : ''}
+    ${verseCard()}
+    ${live ? '<p class="small muted">Keep this screen open while you pray. Your pastor and bacenta leader can see that you joined and how long you stayed.</p>' : ''}
+    <button class="btn ghost block" data-act="leavePrayer">${live ? 'Leave prayer' : 'Back to home'}</button>`;
+}
+function prayerSummaryCard() {
+  const st = S.prayerStats; if (!st.length) return '';
+  const wk = [...new Set(st.map(r => r.week_start))].sort().pop(); const rs = st.filter(r => r.week_start === wk); const ok = rs.filter(prayedIn).length;
+  return `<section class="card"><div class="row between"><h2>Prayer this week</h2><button class="btn sm ghost" data-go="prayerreport">Full report</button></div>
+    <div class="progress"><i style="width:${rs.length ? Math.round(ok / rs.length * 100) : 0}%;background:var(--green)"></i></div>
+    <span class="small"><strong>${ok}</strong> of ${rs.length} prayed · <span class="danger">${rs.length - ok} didn’t pray yet</span></span></section>`;
+}
+function prayerReportScreen() {
+  const weeks = [...new Set(S.prayerStats.map(r => r.week_start))].sort();
+  if (!weeks.length) return `${header('Prayer report', 'home')}${empty('No prayer information yet. Set a prayer meeting, and it will fill up as people join and tick “Pray” in their devotion.', '<button class="btn sm" data-go="meetings">Prayer meetings</button>')}`;
+  reportWeek = Math.min(reportWeek, weeks.length - 1);
+  const sel = weeks[weeks.length - 1 - reportWeek];
+  const last4 = [3, 2, 1, 0].map(i => weekStartKey(new Date(Date.now() - i * 7 * 864e5)));
+  const byWeek = [...new Set([...last4, ...weeks])].sort().slice(-4).map(w => { const rs = S.prayerStats.filter(r => r.week_start === w); const ok = rs.filter(prayedIn).length; return { w, rs, ok, not: rs.length - ok, secs: rs.reduce((a, r) => a + r.meeting_seconds, 0) }; });
+  const cur = byWeek.find(x => x.w === sel) || (() => { const rs = S.prayerStats.filter(r => r.week_start === sel); const ok = rs.filter(prayedIn).length; return { w: sel, rs, ok, not: rs.length - ok }; })();
+  const rows = cur.rs.map(r => ({ ...r, exp: expectedMeetings(r.group_id || '', r.week_start), ok: prayedIn(r) })).sort((a, b) => (a.ok - b.ok) || a.name.localeCompare(b.name));
+  const exp = rows.reduce((a, r) => a + r.exp, 0), att = rows.reduce((a, r) => a + Math.min(r.meetings_attended, r.exp), 0);
+  return `${header('Prayer report', 'home')}
+    <div class="chips">${weeks.slice().reverse().map((w, i) => `<button class="chip" data-rweek="${i}" aria-pressed="${i === reportWeek}">${i === 0 ? 'This week' : i === 1 ? 'Last week' : weekLabel(w)}</button>`).join('')}</div>
+    <div class="stats">
+      <div class="stat"><b style="color:var(--green)">${cur.ok}</b><span>Prayed</span></div>
+      <div class="stat"><b style="color:var(--red)">${cur.not}</b><span>Didn’t pray</span></div>
+      <div class="stat"><b style="color:var(--blue)">${exp ? Math.round(att / exp * 100) : 0}%</b><span>Meeting attendance</span></div>
+    </div>
+    <section class="card"><span class="eyebrow">Prayed and didn’t pray · by week</span>
+      ${stackBars(byWeek.map(x => [x.ok, x.not]), byWeek.map(x => weekTick(x.w)), ['--green', '--red'])}
+      <div class="row small" style="gap:16px"><span class="row" style="gap:6px"><i class="key" style="background:var(--green)"></i>Prayed</span><span class="row" style="gap:6px"><i class="key" style="background:var(--red)"></i>Didn’t pray</span></div></section>
+    <section class="card"><span class="eyebrow">Minutes in prayer meetings · by week</span>${barsFor(byWeek.map(x => mins(x.secs)), byWeek.map(x => weekTick(x.w)), '--blue')}</section>
+    <section class="card"><h2>Everyone · ${weekLabel(sel)}</h2><p class="small muted">“Prayed” means they joined a prayer meeting or ticked “Pray” in their daily devotion that week.</p>
+      <div class="list">${rows.map(r => `<div class="li" style="align-items:flex-start"><div class="avatar">${initials(r.name)}</div><div class="stack grow">
+        <div class="row between"><strong class="ellipsis">${esc(r.name)}</strong>${r.ok ? '<span class="pill ok">Prayed</span>' : '<span class="pill off">Didn’t pray</span>'}</div>
+        <span class="small muted">${esc(groupName(r.group_id || ''))}${r.role !== 'member' ? ' · ' + ROLE_LABEL[r.role] : ''}</span>
+        <span class="small num">Meetings ${r.meetings_attended} of ${Math.max(r.exp, r.meetings_attended)} · ${durLabel(r.meeting_seconds)} in prayer · ticked “Pray” ${r.prayed_days} of 7 days</span>
+        <span class="small muted num">Time in app ${durLabel(r.app_seconds)} · opened ${r.app_opens} time${r.app_opens === 1 ? '' : 's'}</span></div></div>`).join('')}</div></section>`;
+}
+function downloadIcs(m) {
+  const o = nextOccurrence(m); if (!o) return toast('This meeting has no upcoming time.');
+  const f = d => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`;
+  const txt = s => String(s).replace(/[\\,;]/g, c => '\\' + c).replace(/\n/g, '\\n');
+  const BY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Serious Christian Church//Prayer//EN', 'BEGIN:VEVENT', `UID:${m.id}@scc-app`,
+    `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`, `DTSTART:${f(o.s)}`, `DURATION:PT${m.duration}M`,
+    `RRULE:FREQ=WEEKLY;BYDAY=${m.days.map(d => BY[d]).join(',')}`, `SUMMARY:${txt(m.title + ' · ' + churchName())}`,
+    `DESCRIPTION:${txt('Open the church app and tap Join prayer: ' + location.origin + location.pathname)}`,
+    'BEGIN:VALARM', 'TRIGGER:-PT10M', 'ACTION:DISPLAY', `DESCRIPTION:${txt(m.title + ' starts in 10 minutes')}`, 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' })); a.download = 'prayer-meeting.ics';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('Open the downloaded file to add it to your calendar');
+}
+async function loadMeetingReport() {
+  const s = sheet; if (!s || s.type !== 'mreport') return;
+  const { data, error } = await sb.rpc('meeting_report', { m: s.id, d: s.date });
+  if (sheet !== s) return;
+  s.rows = error ? [] : data || []; if (error) toast(errMsg(error)); render();
+}
+
 function hubScreen() {
   const p = me(); const first = p.name.split(' ')[0];
   const t = tasksFor(p), d = dayDoc(), done = t.filter(x => (d.done || []).includes(x.id)).length;
   const pendingAtt = p.role === 'member' ? [] : myGroups().filter(g => !attendanceFor(g));
   return `<div class="stack" style="gap:4px"><h1>${greeting()}, ${esc(first)}</h1><p class="muted small">${p.role === 'member' ? 'How is your walk with God today?' : 'What ministry would you like to focus on today?'}</p></div>
+    ${prayerMeetingCard()}
     ${installCard()}
     ${verseCard()}
     <section class="card"><div class="row between"><h2>Today with God</h2><span class="pill ${done === t.length ? 'ok' : ''}">${done}/${t.length} done</span></div>
@@ -419,8 +603,8 @@ function memberSnippet() {
 function navGrid() {
   const p = me();
   const items = p.role === 'member'
-    ? [['devotion', 'Daily Devotion', 'Verse, Bible reading and prayer.', 'bible', 'cream'], ['progress', 'My Progress', 'Your growth steps and classes.', 'chart', ''], ['announcements', 'Announcements', 'News from the church.', 'bell', 'cream'], ['board', 'Ask & Share', 'Post anonymously for advice or support.', 'talk', 'cream'], ['prayer', 'Prayer Wall', 'Pray for one another.', 'msg', ''], ['sermons', 'Sermon Notes', 'Sunday messages and your notes.', 'book', 'cream'], ['events', 'Events', 'Services and programmes.', 'cal', ''], ['giving', 'Giving', 'Your tithes and offerings.', 'heart', 'green'], ['guide', 'Field Guide', 'Find policies and resources.', 'book', '']]
-    : [['mission', 'Dashboard', 'Understand today’s ministry.', 'home', ''], ['progress', 'My Progress', 'Your readiness and competencies.', 'chart', ''], ['announcements', 'Announcements', 'Ministry communication.', 'bell', 'cream'], [p.role === 'pastor' ? 'reports' : 'report', 'Reports', 'Capture ministry activity.', 'file', 'cream'], ['people', 'Membership', 'The people you reach.', 'users', 'green'], ['prayer', 'Prayer Wall', 'Requests from your members.', 'msg', ''], ['board', 'Ask & Share', 'Anonymous posts from the church.', 'talk', 'cream'], ['devotion', 'Daily Devotion', 'Verse, Bible reading and prayer.', 'bible', 'cream'], ['sermons', 'Sermon Notes', 'Sunday messages and your notes.', 'book', ''], ['events', 'Events', 'Services and programmes.', 'cal', ''], ['health', 'Ministry Health', 'Attendance, offering and busing.', 'chart', ''], ['guide', 'Field Guide', 'Find policies and resources.', 'book', 'cream']];
+    ? [['devotion', 'Daily Devotion', 'Verse, Bible reading and prayer.', 'bible', 'cream'], ['progress', 'My Progress', 'Your growth steps and classes.', 'chart', ''], ['announcements', 'Announcements', 'News from the church.', 'bell', 'cream'], ['board', 'Ask & Share', 'Post anonymously for advice or support.', 'talk', 'cream'], ['meetings', 'Prayer Meetings', 'Join the church in prayer.', 'cal', 'green'], ['prayer', 'Prayer Wall', 'Pray for one another.', 'msg', ''], ['sermons', 'Sermon Notes', 'Sunday messages and your notes.', 'book', 'cream'], ['events', 'Events', 'Services and programmes.', 'cal', ''], ['giving', 'Giving', 'Your tithes and offerings.', 'heart', 'green'], ['guide', 'Field Guide', 'Find policies and resources.', 'book', '']]
+    : [['mission', 'Dashboard', 'Understand today’s ministry.', 'home', ''], ['progress', 'My Progress', 'Your readiness and competencies.', 'chart', ''], ['announcements', 'Announcements', 'Ministry communication.', 'bell', 'cream'], [p.role === 'pastor' ? 'reports' : 'report', 'Reports', 'Capture ministry activity.', 'file', 'cream'], ['people', 'Membership', 'The people you reach.', 'users', 'green'], ['prayerreport', 'Prayer Report', 'Who prayed and who didn’t, by week.', 'chart', 'green'], ['meetings', 'Prayer Meetings', 'Set prayer times and see who joined.', 'cal', 'cream'], ['prayer', 'Prayer Wall', 'Requests from your members.', 'msg', ''], ['board', 'Ask & Share', 'Anonymous posts from the church.', 'talk', 'cream'], ['devotion', 'Daily Devotion', 'Verse, Bible reading and prayer.', 'bible', 'cream'], ['sermons', 'Sermon Notes', 'Sunday messages and your notes.', 'book', ''], ['events', 'Events', 'Services and programmes.', 'cal', ''], ['health', 'Ministry Health', 'Attendance, offering and busing.', 'chart', ''], ['guide', 'Field Guide', 'Find policies and resources.', 'book', 'cream']];
   if (p.role === 'pastor') items.splice(1, 0, ['admin', 'Church Admin', 'Bacentas, roles and church settings.', 'gear', 'green']);
   return items.map(([t, title, d, i, cls]) => `<button class="nav-card" data-go="${t}"><span class="chev">${ic('chev')}</span><div class="tile-ico ${cls}">${ic(i)}</div><div class="stack"><strong style="font-size:17px">${title}</strong><span class="small muted">${d}</span></div></button>`).join('');
 }
@@ -471,6 +655,7 @@ function missionScreen() {
       <div class="row between small"><span class="num"><strong>${reached.toLocaleString()}</strong> <span class="muted">of ${Number(goal).toLocaleString()}</span></span><span class="muted num">${Math.round(reached / goal * 100)}%</span></div></section>` : ''}
     <section class="card"><h2>This week needs your attention</h2>
       <ul class="todo">${todos.map(([t, d, done]) => `<li><span class="dot ${done ? 'done' : ''}"></span><div class="stack"><strong>${esc(t)}</strong><span class="small muted">${esc(d)}</span></div></li>`).join('') || '<li class="muted">You are all caught up.</li>'}</ul></section>
+    ${prayerSummaryCard()}
     ${birthdaysCard(groups)}
     ${last4Card(groups, p.role === 'pastor' ? 'Whole church' : 'My ministry')}`;
 }
@@ -606,6 +791,7 @@ function devotionScreen() {
   return `${header('Daily devotion', p.role === 'member' ? null : 'home')}
     ${verseCard(true)}
     <div class="stats"><div class="stat"><b style="color:var(--green)">${streakOf(p)}</b><span>Day streak</span></div><div class="stat"><b style="color:var(--blue)">${month}</b><span>Days this month</span></div><div class="stat"><b style="color:var(--amber)">${planDay()}/21</b><span>John plan</span></div></div>
+    ${S.meetings.length ? (() => { const wk = weekStartKey(); const mine = S.myCheckins.filter(c => c.date >= wk).length; const exp = expectedMeetings(p.group, wk); return `<section class="card"><div class="row between"><div class="stack"><strong>Prayer meetings this week</strong><span class="small muted">You joined ${mine} of ${Math.max(exp, mine)}</span></div><button class="btn sm ghost" data-go="meetings">Open</button></div></section>`; })() : ''}
     <section class="card"><h2>Today’s tasks</h2>${taskList(p)}
       <form id="task-form" class="row" novalidate><input class="input grow" id="task-new" maxlength="80" placeholder="Add your own, e.g. Fast until noon" aria-label="New daily task"><button class="btn">Add</button></form>
       <span class="small muted">Tasks you add repeat every day. Your streak counts the main tasks.</span></section>
@@ -617,6 +803,8 @@ function devotionScreen() {
 function prayerScreen() {
   const p = me(); const list = S.prayers.slice().sort(newest); const open = list.filter(x => !x.answered).length;
   return `${header('Prayer wall', p.role === 'member' ? null : 'home')}
+    ${prayerMeetingCard()}
+    <button class="btn ghost" data-go="meetings">${ic('cal')} Prayer meetings</button>
     <p class="muted">${open} open request${open === 1 ? '' : 's'} · ${list.length - open} answered. Tap “I prayed” so they know they are covered.</p>
     <button class="btn" data-sheet="prayer">${ic('plus')} New prayer request</button>
     ${list.map(x => { const mine = (x.prayed || []).includes(uid()); const own = x.by === uid(); return `<section class="card"><div class="row"><div class="avatar">${initials(x.name)}</div><div class="stack grow"><strong>${esc(x.name)}</strong><span class="small muted">${esc(groupName(x.group))} · ${fmt(x.createdAt)}</span></div>${x.answered ? '<span class="pill ok">Answered</span>' : ''}</div>
@@ -696,6 +884,7 @@ function moreScreen() {
   const links = p.role === 'member'
     ? [['devotion', 'Daily devotion', 'bible'], ['board', 'Ask & Share', 'talk'], ['prayer', 'Prayer wall', 'msg'], ['sermons', 'Sermon notes', 'book'], ['events', 'Events', 'cal'], ['progress', 'My progress', 'target'], ['giving', 'Giving', 'heart'], ['announcements', 'Announcements', 'bell'], ['guide', 'Field guide', 'book']]
     : [['devotion', 'Daily devotion', 'bible'], ['board', 'Ask & Share', 'talk'], ['prayer', 'Prayer wall', 'msg'], ['sermons', 'Sermon notes', 'book'], ['announcements', 'Announcements', 'bell'], ['attendance', 'Church attendance', 'clip'], [p.role === 'pastor' ? 'reports' : 'report', 'Reports', 'file'], ['health', 'Ministry health', 'chart'], ['events', 'Events', 'cal'], ['giving', 'Giving', 'heart'], ['progress', 'My progress', 'target'], ['guide', 'Field guide', 'book']];
+  links.splice(1, 0, ['meetings', 'Prayer meetings', 'cal']); if (p.role !== 'member') links.splice(2, 0, ['prayerreport', 'Prayer report', 'chart']);
   if (p.role === 'pastor') links.unshift(['admin', 'Church admin', 'gear']);
   const ios = isIOS && !isStandalone();
   return `${header('More')}
@@ -706,6 +895,7 @@ function moreScreen() {
       <button class="li" data-act="theme">${ic('sun')}<span class="grow">Switch light / dark</span></button>
       <button class="li danger" data-act="logout">${ic('out')}<span class="grow">Sign out</span></button>
     </div></section>
+    <p class="small muted">Your pastor and bacenta leader can see when you join prayer meetings, the days you tick “Pray”, and how long you use the app each week.</p>
     <section class="card"><h2>Delete account</h2><p class="small muted">Removes your profile, devotion history, notes and giving record. Anonymous posts stay anonymous.</p><div>${delBtn('account', 'Delete my account')}</div></section>
     ${credit}`;
 }
@@ -716,8 +906,8 @@ function sheetHtml() {
   const t = sheet.type;
   if (t === 'quick') {
     const acts = p.role === 'member'
-      ? [['go:devotion', 'Today’s devotion', 'bible'], ['post', 'Post anonymously', 'talk'], ['prayer', 'Send a prayer request', 'msg'], ['gift', 'Log a gift', 'heart'], ['go:events', 'RSVP to an event', 'cal']]
-      : [['go:devotion', 'Today’s devotion', 'bible'], ['post', 'Post anonymously', 'talk'], ['go:attendance', 'Record attendance', 'clip'], [p.role === 'leader' ? 'go:report' : 'go:reports', p.role === 'leader' ? 'Submit weekly report' : 'Review reports', 'file'], ['announce', 'Post announcement', 'bell'], ['addMember', 'Add a member', 'users']];
+      ? [['go:devotion', 'Today’s devotion', 'bible'], ['go:meetings', 'Prayer meetings', 'cal'], ['post', 'Post anonymously', 'talk'], ['prayer', 'Send a prayer request', 'msg'], ['gift', 'Log a gift', 'heart'], ['go:events', 'RSVP to an event', 'cal']]
+      : [['meeting', 'Set a prayer meeting', 'cal'], ['go:prayerreport', 'Prayer report', 'chart'], ['go:devotion', 'Today’s devotion', 'bible'], ['post', 'Post anonymously', 'talk'], ['go:attendance', 'Record attendance', 'clip'], [p.role === 'leader' ? 'go:report' : 'go:reports', p.role === 'leader' ? 'Submit weekly report' : 'Review reports', 'file'], ['announce', 'Post announcement', 'bell'], ['addMember', 'Add a member', 'users']];
     body = `<h2>Quick actions</h2><div class="list">${acts.map(([a, l, i]) => `<button class="li" ${a.startsWith('go:') ? `data-go="${a.slice(3)}"` : `data-sheet="${a}"`}><div class="tile-ico" style="width:38px;height:38px">${ic(i)}</div><span class="grow">${l}</span>${ic('chev')}</button>`).join('')}</div>`;
   } else if (t === 'verse') {
     const [ref, text] = verseOfDay();
@@ -793,6 +983,26 @@ function sheetHtml() {
     body = `<h2>Report this post</h2><p class="small muted">The pastor will review it. The poster won’t know who reported it.</p><form id="flag-form" class="stack" style="gap:12px" novalidate>
       <div class="field"><label for="fl-reason">What’s wrong?</label><select class="input" id="fl-reason"><option>Names or targets someone</option><option>Hurtful or abusive</option><option>Someone may be in danger</option><option>Spam or off-topic</option><option>Something else</option></select></div>
       <button class="btn block">Send report</button></form>`;
+  } else if (t === 'meeting') {
+    body = `<h2>Set a prayer meeting</h2><form id="meeting-form" class="stack" style="gap:12px" novalidate>
+      <div class="field"><label for="mt-title">Name</label><input class="input" id="mt-title" maxlength="80" value="Morning Prayer"></div>
+      <div class="grid2"><div class="field"><label for="mt-start">Starts at</label><input class="input" id="mt-start" type="time" value="05:00"></div>
+      <div class="field"><label for="mt-dur">How long</label><select class="input" id="mt-dur">${[15, 30, 45, 60, 90, 120].map(x => `<option value="${x}" ${x === 60 ? 'selected' : ''}>${durLabel(x * 60)}</option>`).join('')}</select></div></div>
+      <fieldset class="field" style="border:0;padding:0;margin:0"><legend class="small muted" style="font-weight:600;margin-bottom:6px">Which days</legend><div class="chips">${DAY_SHORT.map((d, i) => `<label class="chip day-chip"><input type="checkbox" name="mt-day" value="${i}" checked> ${d}</label>`).join('')}</div></fieldset>
+      <div class="field"><label for="mt-aud">Who should pray</label><select class="input" id="mt-aud">${p.role === 'pastor' ? '<option value="all">Everyone in the church</option>' + S.groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('') : `<option value="${esc(p.group)}">${esc(groupName(p.group))}</option>`}</select></div>
+      <div class="field"><label for="mt-points">Prayer points (one per line, optional)</label><textarea class="input" id="mt-points" placeholder="Pray for the sick&#10;Pray for souls in our area"></textarea></div>
+      <p class="small muted">People who don’t open the app and tap Join while the meeting is on are shown as “didn’t join” in your report.</p>
+      <p class="err" id="mt-err" hidden></p><button class="btn block">Save prayer meeting</button></form>`;
+  } else if (t === 'mreport') {
+    const m = S.meetings.find(x => x.id === sheet.id); if (!m) { sheet = null; return ''; }
+    const dates = []; for (let i = 0; i < 14 && dates.length < 5; i++) { const d = new Date(); d.setDate(d.getDate() - i); if (m.days.includes(d.getDay()) && ymd(d) >= m.createdAt && meetingWindow(m, d).s <= new Date()) dates.push(ymd(d)); }
+    const r = sheet.rows; const joined = (r || []).filter(x => x.joined_at).sort((a, b) => Date.parse(a.joined_at) - Date.parse(b.joined_at)); const missed = (r || []).filter(x => !x.joined_at).sort((a, b) => a.name.localeCompare(b.name));
+    body = `<h2>${esc(m.title)}</h2><span class="small muted">${daysLabel(m.days)} · ${m.start} · ${durLabel(m.duration * 60)}</span>
+      ${dates.length ? `<div class="chips">${dates.map(d => `<button class="chip" data-mdate="${d}" aria-pressed="${d === sheet.date}">${d === todayKey() ? 'Today' : new Date(d + 'T12:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}</button>`).join('')}</div>` : '<p class="small muted">This meeting hasn’t started yet.</p>'}
+      ${r === null ? '<p class="muted">Loading…</p>' : `
+      <div class="stats" style="grid-template-columns:1fr 1fr"><div class="stat"><b style="color:var(--green)">${joined.length}</b><span>Joined</span></div><div class="stat"><b style="color:var(--red)">${missed.length}</b><span>Didn’t join</span></div></div>
+      <h2>Joined</h2>${joined.length ? `<div class="list">${joined.map(x => `<div class="li"><div class="avatar">${initials(x.name)}</div><div class="stack grow"><strong>${esc(x.name)}</strong><span class="small muted">Joined ${fmtTime(new Date(x.joined_at))} · prayed ${durLabel(x.seconds)}</span></div><span class="pill ok">${durLabel(x.seconds)}</span></div>`).join('')}</div>` : '<p class="small muted">Nobody yet.</p>'}
+      <h2>Didn’t join</h2>${missed.length ? `<div class="list">${missed.map(x => `<div class="li"><div class="avatar">${initials(x.name)}</div><div class="stack grow"><strong>${esc(x.name)}</strong><span class="small muted">${esc(groupName(x.group_id || ''))}</span></div><span class="pill off">Didn’t pray</span></div>`).join('')}</div>` : '<p class="small muted">Everyone joined. Praise God!</p>'}`}`;
   } else if (t === 'profile') {
     body = `<h2>Edit profile</h2><form id="profile-form" class="stack" style="gap:12px" novalidate>
       <div class="field"><label for="pf-name">Full name</label><input class="input" id="pf-name" value="${esc(p.name)}"></div>
@@ -804,8 +1014,8 @@ function sheetHtml() {
 }
 
 /* ---------- render ---------- */
-const SCREENS = { home: hubScreen, mission: missionScreen, devotion: devotionScreen, prayer: prayerScreen, sermons: sermonsScreen, board: boardScreen, people: peopleScreen, attendance: attendanceScreen, report: reportScreen, reports: reportsScreen, health: healthScreen, announcements: announcementsScreen, events: eventsScreen, giving: givingScreen, progress: progressScreen, guide: guideScreen, more: moreScreen, admin: adminScreen };
-const STAFF_ONLY = ['mission', 'people', 'attendance', 'report', 'reports', 'health'];
+const SCREENS = { home: hubScreen, mission: missionScreen, devotion: devotionScreen, prayer: prayerScreen, sermons: sermonsScreen, board: boardScreen, people: peopleScreen, attendance: attendanceScreen, report: reportScreen, reports: reportsScreen, health: healthScreen, announcements: announcementsScreen, events: eventsScreen, giving: givingScreen, progress: progressScreen, guide: guideScreen, more: moreScreen, admin: adminScreen, meetings: meetingsScreen, prayroom: prayRoomScreen, prayerreport: prayerReportScreen };
+const STAFF_ONLY = ['mission', 'people', 'attendance', 'report', 'reports', 'health', 'prayerreport'];
 function render() {
   // Keep typing focus, unsaved field values and sheet scroll when live data re-renders the page.
   const active = document.activeElement; const focused = active?.id;
@@ -847,6 +1057,7 @@ async function performDelete(key) {
   if (kind === 'group') return del('groups', 'groups', 'Bacenta deleted');
   if (kind === 'post') return del('board', 'board', 'Your post was deleted');
   if (kind === 'remove') return run(sb.from('board').update({ removed: true }).eq('id', id), 'Post removed from Ask & Share', 'board');
+  if (kind === 'meeting') return del('prayer_meetings', 'meetings', 'Prayer meeting deleted');
   if (kind === 'member') { sheet = null; return del('members', 'members', 'Removed from roster'); }
   if (kind === 'account') {
     if (await run(sb.rpc('delete_my_account'), 'Your account has been deleted')) await sb.auth.signOut();
@@ -897,8 +1108,15 @@ root.addEventListener('click', async e => {
   if (d.reply) return openSheet({ type: 'reply', id: d.reply, private: false });
   if (d.dm) return openSheet({ type: 'reply', id: d.dm, private: true });
   if (d.hide) return run(sb.from('profiles').update({ hidden: [...new Set([...me().hidden, d.hide])] }).eq('id', uid()), 'Post hidden for you', 'profile');
+  if (d.join) return joinPrayer(d.join);
+  if (d.ics) return downloadIcs(S.meetings.find(m => m.id === d.ics));
+  if (d.mreport) { openSheet({ type: 'mreport', id: d.mreport, date: todayKey(), rows: null }); return loadMeetingReport(); }
+  if (d.mdate) { sheet.date = d.mdate; sheet.rows = null; render(); return loadMeetingReport(); }
+  if (d.pause) { const m = S.meetings.find(x => x.id === d.pause); return run(sb.from('prayer_meetings').update({ active: !m.active }).eq('id', m.id), m.active ? 'Prayer meeting paused' : 'Prayer meeting resumed', 'meetings', 'prayerStats'); }
+  if (d.rweek) { reportWeek = +d.rweek; return render(); }
   if (d.dismissflag) return run(sb.from('flags').delete().eq('id', d.dismissflag), 'Report dismissed', 'flags');
   switch (d.act) {
+    case 'leavePrayer': { const live = liveMeeting()?.id === prayRoom; const secs = prayerSecs; prayRoom = null; go('home'); if (live) toast(`You prayed for ${durLabel(secs)}. God bless you 🙏`); reload('myCheckins'); return; }
     case 'close': if (sheet?.type === 'verse') markVerseSeen(); root.querySelectorAll('.sheet [data-dirty]').forEach(el => delete el.dataset.dirty); sheet = null; return render();
     case 'amen': markVerseSeen(); sheet = null; return render();
     case 'amenDevotion': markVerseSeen(); return go('devotion');
@@ -992,6 +1210,12 @@ async function handleSubmit(f) {
   if (f.id === 'gift-form') return lock(async () => {
     const a = +val('gf-amt'); if (!(a > 0)) return showErr('gf-err', 'Enter an amount above zero.');
     if (await run(sb.from('giving').insert({ uid: uid(), type: val('gf-type'), amount: a, date: val('gf-date') || todayKey() }), 'Gift saved to your record', 'giving')) { sheet = null; render(); }
+  });
+  if (f.id === 'meeting-form') return lock(async () => {
+    const title = val('mt-title'), start = val('mt-start'); const days = [...f.querySelectorAll('input[name=mt-day]:checked')].map(x => +x.value);
+    if (!title || !start) return showErr('mt-err', 'Add a name and a start time.');
+    if (!days.length) return showErr('mt-err', 'Choose at least one day.');
+    if (await run(sb.from('prayer_meetings').insert({ title, start_time: start, duration_min: +val('mt-dur'), days, audience: val('mt-aud'), points: val('mt-points'), created_by: uid() }), 'Prayer meeting saved', 'meetings', 'prayerStats')) { sheet = null; tab = 'meetings'; render(); }
   });
   if (f.id === 'event-form') return lock(async () => {
     if (!val('ev-title') || !val('ev-date')) return showErr('ev-err', 'Add a title and a date.');
