@@ -111,8 +111,8 @@ let tab = 'home', sheet = null, authMode = 'signin', peopleFilter = 'All', peopl
 let attGroup = null, attDraft = null, confirmKey = null, installEvt = null, creatingProfile = false, recovery = false, authNotice = '';
 let prayRoom = null, prayerSecs = 0, reportWeek = 0, rolesFilter = 'All', rolesQuery = '';
 
-window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (S.profile) render(); });
-window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Open Serious Christian Church from your home screen.'); if (S.profile) render(); });
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; render(); });
+window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Open Serious Christian Church from your home screen.'); render(); });
 try { const t = localStorage.getItem('shepherd-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 
 const me = () => S.profile;
@@ -375,6 +375,7 @@ function setupScreen() {
 function loginScreen() {
   const up = authMode === 'signup';
   return `<main class="login">
+    ${installCard()}
     <div class="brand"><div class="brand-mark">${ic('church')}</div><div class="stack"><span class="eyebrow gold">Church app</span><strong style="font-family:var(--display);font-size:20px;line-height:1.2">${esc(churchName())}</strong></div></div>
     <div class="stack" style="gap:8px"><h1>${up ? 'Create your account' : 'Sign in to your ministry'}</h1><p class="muted">Your home screen, reports and tools are set up for your role in the church.</p></div>
     <div class="seg" role="group" aria-label="Sign in or create account"><button data-auth="signin" aria-pressed="${!up}">Sign in</button><button data-auth="signup" aria-pressed="${up}">Create account</button></div>
