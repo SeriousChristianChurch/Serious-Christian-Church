@@ -105,11 +105,11 @@ const sb = configured ? createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persi
 const S = {
   user: null, profile: null, profileLoaded: false, settings: {}, groups: [], members: [], attendance: [], reports: [],
   announcements: [], events: [], prayers: [], sermons: [], followups: [], board: [], replies: [], myPosts: [], priv: {},
-  days: [], giving: [], notes: [], users: [], flags: [], meetings: [], myCheckins: [], prayerStats: []
+  days: [], giving: [], notes: [], users: [], flags: [], meetings: [], myCheckins: [], prayerStats: [], prayerReady: true
 };
 let tab = 'home', sheet = null, authMode = 'signin', peopleFilter = 'All', peopleQuery = '', guideQuery = '', boardFilter = 'All';
 let attGroup = null, attDraft = null, confirmKey = null, installEvt = null, creatingProfile = false, recovery = false, authNotice = '';
-let prayRoom = null, prayerSecs = 0, reportWeek = 0;
+let prayRoom = null, prayerSecs = 0, reportWeek = 0, rolesFilter = 'All', rolesQuery = '';
 
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (S.profile) render(); });
 window.addEventListener('appinstalled', () => { installEvt = null; toast('Installed. Open Serious Christian Church from your home screen.'); if (S.profile) render(); });
@@ -130,7 +130,7 @@ async function rows(table, build = q => q) {
   if (error) { console.warn('load', table, error.message); return []; }
   return data || [];
 }
-const mapProfile = r => r && { id: r.id, name: r.name, email: r.email, phone: r.phone, role: r.role, group: r.group_id || '', progress: r.progress || {}, customTasks: r.custom_tasks || [], hidden: r.hidden || [] };
+const mapProfile = r => r && { id: r.id, name: r.name, email: r.email, phone: r.phone, role: r.role, createdAt: r.created_at, group: r.group_id || '', progress: r.progress || {}, customTasks: r.custom_tasks || [], hidden: r.hidden || [] };
 const isStaffRole = () => me() && me().role !== 'member';
 const LOADERS = {
   settings: async () => {
@@ -165,19 +165,22 @@ const LOADERS = {
   giving: async () => { S.giving = (await rows('giving')).map(g => ({ ...g, amount: Number(g.amount), date: String(g.date).slice(0, 10) })); },
   notes: async () => { S.notes = (await rows('sermon_notes')).map(n => ({ id: n.sermon_id, text: n.text })); },
   meetings: async () => {
-    S.meetings = (await rows('prayer_meetings')).map(m => ({ id: m.id, title: m.title, start: String(m.start_time).slice(0, 5), duration: m.duration_min, days: m.days || [],
+    const { data, error } = await sb.from('prayer_meetings').select('*');
+    S.prayerReady = !(error && /schema cache|does not exist/i.test(error.message));
+    S.meetings = (data || []).map(m => ({ id: m.id, title: m.title, start: String(m.start_time).slice(0, 5), duration: m.duration_min, days: m.days || [],
       audience: m.audience, points: m.points || '', active: m.active, createdBy: m.created_by, createdAt: String(m.created_at).slice(0, 10) }));
   },
-  myCheckins: async () => { S.myCheckins = (await rows('prayer_checkins', q => q.eq('uid', uid()).gte('date', dayKey(-35)))).map(c => ({ meeting: c.meeting_id, date: String(c.date).slice(0, 10), seconds: c.seconds })); },
+  myCheckins: async () => { if (!S.prayerReady) { S.myCheckins = []; return; } S.myCheckins = (await rows('prayer_checkins', q => q.eq('uid', uid()).gte('date', dayKey(-35)))).map(c => ({ meeting: c.meeting_id, date: String(c.date).slice(0, 10), seconds: c.seconds })); },
   prayerStats: async () => {
-    if (!isStaffRole()) { S.prayerStats = []; return; }
+    if (!isStaffRole() || !S.prayerReady) { S.prayerStats = []; return; }
     const { data, error } = await sb.rpc('prayer_stats', { p_weeks: 4 });
     if (error) console.warn('prayer_stats', error.message);
     S.prayerStats = (data || []).map(r => ({ ...r, week_start: String(r.week_start).slice(0, 10) }));
   }
 };
 const SIGNED_IN_KEYS = ['settings', 'groups', 'users', 'members', 'followups', 'attendance', 'reports', 'announcements', 'events', 'sermons', 'prayers', 'board', 'flags', 'days', 'giving', 'notes', 'meetings', 'myCheckins', 'prayerStats'];
-async function loadAll() { await Promise.all(SIGNED_IN_KEYS.map(k => LOADERS[k]().catch(e => console.warn(k, e)))); }
+// Load meetings first: it tells us whether the prayer update has been run, so the other prayer calls can be skipped if not.
+async function loadAll() { await LOADERS.meetings().catch(() => {}); await Promise.all(SIGNED_IN_KEYS.filter(k => k !== 'meetings').map(k => LOADERS[k]().catch(e => console.warn(k, e)))); }
 async function reload(...keys) { await Promise.all(keys.map(k => LOADERS[k]().catch(e => console.warn(k, e)))); render(); }
 
 /* ---------- live updates ---------- */
@@ -230,7 +233,7 @@ function markVerseSeen() { try { localStorage.setItem('shepherd-verse-' + uid(),
 
 /* ---------- app time and prayer room heartbeat ---------- */
 // The server measures the time between heartbeats, so the phone cannot inflate it.
-function trackUsage() { if (S.profile && document.visibilityState === 'visible') sb.rpc('track_usage').then(() => {}, () => {}); }
+function trackUsage() { if (S.profile && S.prayerReady && document.visibilityState === 'visible') sb.rpc('track_usage').then(() => {}, () => {}); }
 async function prayerBeat() {
   if (tab !== 'prayroom' || !prayRoom || document.visibilityState !== 'visible') return;
   if (liveMeeting()?.id !== prayRoom) return render();
@@ -267,6 +270,7 @@ const ERRORS = [
   [/unable to validate email|invalid email|email address .* is invalid/i, 'Enter a valid email address.'],
   [/rate limit|too many/i, 'Too many attempts. Wait a few minutes and try again.'],
   [/failed to fetch|network/i, 'No internet connection. Check your data and try again.'],
+  [/schema cache|does not exist/i, 'Prayer meetings aren’t switched on yet. The pastor needs to run the prayer update in Supabase.'],
   [/row-level security|permission denied|only the pastor|own bacenta/i, 'You don’t have permission to do that.']
 ];
 const errMsg = e => (ERRORS.find(([re]) => re.test(e?.message || '')) || [, 'Something went wrong. Check your connection and try again.'])[1];
@@ -481,8 +485,17 @@ function prayerMeetingCard() {
   const today = next.o.s.toDateString() === new Date().toDateString();
   return `<section class="card"><div class="row"><div class="tile-ico cream">${ic('msg')}</div><div class="stack grow"><span class="eyebrow">Next prayer meeting</span><strong>${esc(next.m.title)}</strong><span class="small muted">${today ? 'Today' : next.o.s.toLocaleDateString('en-GB', { weekday: 'long' })} at ${fmtTime(next.o.s)} · open the app then and tap Join</span></div><button class="btn sm ghost" data-go="meetings">Details</button></div></section>`;
 }
+function prayerSetupNotice() {
+  return me().role === 'pastor'
+    ? `<section class="card"><h2>Switch on prayer meetings</h2><p class="small">Prayer meetings and the prayer report need a one-time database update.</p>
+        <ul class="todo"><li><span class="dot"></span><span>Open Supabase → <strong>SQL Editor</strong> → <strong>New query</strong>, and empty the box.</span></li>
+        <li><span class="dot"></span><span>Paste everything from <strong>supabase/prayer-update.sql</strong> (in the GitHub repository) and click <strong>Run</strong>.</span></li>
+        <li><span class="dot"></span><span>Come back here and pull down to refresh.</span></li></ul></section>`
+    : empty('Prayer meetings are coming soon.');
+}
 function meetingsScreen() {
   const p = me(); const staff = p.role !== 'member'; const wk = weekStartKey();
+  if (!S.prayerReady) return `${header('Prayer meetings', 'home')}${prayerSetupNotice()}`;
   const list = (staff ? S.meetings : myMeetings()).slice().sort((a, b) => a.start.localeCompare(b.start));
   return `${header('Prayer meetings', 'home')}
     ${prayerMeetingCard()}
@@ -519,6 +532,7 @@ function prayerSummaryCard() {
     <span class="small"><strong>${ok}</strong> of ${rs.length} prayed · <span class="danger">${rs.length - ok} didn’t pray yet</span></span></section>`;
 }
 function prayerReportScreen() {
+  if (!S.prayerReady) return `${header('Prayer report', 'home')}${prayerSetupNotice()}`;
   const weeks = [...new Set(S.prayerStats.map(r => r.week_start))].sort();
   if (!weeks.length) return `${header('Prayer report', 'home')}${empty('No prayer information yet. Set a prayer meeting, and it will fill up as people join and tick “Pray” in their devotion.', '<button class="btn sm" data-go="meetings">Prayer meetings</button>')}`;
   reportWeek = Math.min(reportWeek, weeks.length - 1);
@@ -572,6 +586,7 @@ function hubScreen() {
   const t = tasksFor(p), d = dayDoc(), done = t.filter(x => (d.done || []).includes(x.id)).length;
   const pendingAtt = p.role === 'member' ? [] : myGroups().filter(g => !attendanceFor(g));
   return `<div class="stack" style="gap:4px"><h1>${greeting()}, ${esc(first)}</h1><p class="muted small">${p.role === 'member' ? 'How is your walk with God today?' : 'What ministry would you like to focus on today?'}</p></div>
+    ${newPeopleCard()}
     ${prayerMeetingCard()}
     ${installCard()}
     ${verseCard()}
@@ -605,7 +620,7 @@ function navGrid() {
   const items = p.role === 'member'
     ? [['devotion', 'Daily Devotion', 'Verse, Bible reading and prayer.', 'bible', 'cream'], ['progress', 'My Progress', 'Your growth steps and classes.', 'chart', ''], ['announcements', 'Announcements', 'News from the church.', 'bell', 'cream'], ['board', 'Ask & Share', 'Post anonymously for advice or support.', 'talk', 'cream'], ['meetings', 'Prayer Meetings', 'Join the church in prayer.', 'cal', 'green'], ['prayer', 'Prayer Wall', 'Pray for one another.', 'msg', ''], ['sermons', 'Sermon Notes', 'Sunday messages and your notes.', 'book', 'cream'], ['events', 'Events', 'Services and programmes.', 'cal', ''], ['giving', 'Giving', 'Your tithes and offerings.', 'heart', 'green'], ['guide', 'Field Guide', 'Find policies and resources.', 'book', '']]
     : [['mission', 'Dashboard', 'Understand today’s ministry.', 'home', ''], ['progress', 'My Progress', 'Your readiness and competencies.', 'chart', ''], ['announcements', 'Announcements', 'Ministry communication.', 'bell', 'cream'], [p.role === 'pastor' ? 'reports' : 'report', 'Reports', 'Capture ministry activity.', 'file', 'cream'], ['people', 'Membership', 'The people you reach.', 'users', 'green'], ['prayerreport', 'Prayer Report', 'Who prayed and who didn’t, by week.', 'chart', 'green'], ['meetings', 'Prayer Meetings', 'Set prayer times and see who joined.', 'cal', 'cream'], ['prayer', 'Prayer Wall', 'Requests from your members.', 'msg', ''], ['board', 'Ask & Share', 'Anonymous posts from the church.', 'talk', 'cream'], ['devotion', 'Daily Devotion', 'Verse, Bible reading and prayer.', 'bible', 'cream'], ['sermons', 'Sermon Notes', 'Sunday messages and your notes.', 'book', ''], ['events', 'Events', 'Services and programmes.', 'cal', ''], ['health', 'Ministry Health', 'Attendance, offering and busing.', 'chart', ''], ['guide', 'Field Guide', 'Find policies and resources.', 'book', 'cream']];
-  if (p.role === 'pastor') items.splice(1, 0, ['admin', 'Church Admin', 'Bacentas, roles and church settings.', 'gear', 'green']);
+  if (p.role === 'pastor') items.splice(1, 0, ['roles', 'People & Roles', 'Everyone who joined the app. Assign leaders.', 'users', 'green'], ['admin', 'Church Admin', 'Bacentas and church settings.', 'gear', 'green']);
   return items.map(([t, title, d, i, cls]) => `<button class="nav-card" data-go="${t}"><span class="chev">${ic('chev')}</span><div class="tile-ico ${cls}">${ic(i)}</div><div class="stack"><strong style="font-size:17px">${title}</strong><span class="small muted">${d}</span></div></button>`).join('');
 }
 
@@ -673,6 +688,7 @@ function peopleScreen() {
   const total = S.members.filter(m => groups.includes(m.group));
   const list = total.filter(m => (peopleFilter === 'All' || m.status === peopleFilter) && (!q || m.name.toLowerCase().includes(q))).sort((a, b) => a.name.localeCompare(b.name));
   return `${header('Membership')}
+    ${p.role === 'pastor' ? `<section class="card"><div class="row"><div class="stack grow"><strong>${S.users.length} ${S.users.length === 1 ? 'person has' : 'people have'} created an account</strong><span class="small muted">${S.users.filter(needsBacenta).length} not in a bacenta yet</span></div><button class="btn sm" data-go="roles">People & roles</button></div></section>` : ''}
     <div class="stats">
       <div class="stat"><b>${total.length}</b><span>Members</span></div>
       <div class="stat"><b style="color:var(--blue)">${total.filter(m => m.status === 'New').length}</b><span>New</span></div>
@@ -683,7 +699,7 @@ function peopleScreen() {
     <div class="chips">${['All', 'Active', 'New', 'Inactive'].map(f => `<button class="chip" data-filter="${f}" aria-pressed="${f === peopleFilter}">${f}</button>`).join('')}
       ${groups.length ? '<button class="chip" data-sheet="addMember" style="margin-left:auto">+ Add member</button>' : ''}</div>
     <section class="card" style="padding-block:6px"><div class="list">${list.map(m => `<button class="li" data-member="${m.id}"><div class="avatar">${initials(m.name)}</div><div class="stack grow"><strong class="ellipsis">${esc(m.name)}</strong><span class="small muted ellipsis">${p.role === 'pastor' ? esc(groupName(m.group)) + ' · ' : ''}${esc(m.phone || 'No phone')}</span></div>${statusPill(m.status)}</button>`).join('')
-      || empty(total.length ? 'No members match this search.' : groups.length ? 'No members yet. Add the people in your bacenta.' : 'Add a bacenta in Church Admin first.')}</div></section>`;
+      || empty(total.length ? 'No members match this search.' : groups.length ? 'No members yet. Add the people in your bacenta.' : (p.role === 'pastor' ? 'Add a bacenta in Church Admin, then put people in it under People & roles.' : 'Ask your pastor to put you in a bacenta.'))}</div></section>`;
 }
 
 function attendanceScreen() {
@@ -855,11 +871,57 @@ function boardScreen() {
     <p class="small muted">If you or someone else is in danger, call ${esc(CHURCH.emergencyNumber)} or speak to a pastor straight away.</p>`;
 }
 
+/* ---------- people & roles (pastor) ---------- */
+const roleOpts = r => ['member', 'leader', 'pastor'].map(x => `<option value="${x}" ${x === r ? 'selected' : ''}>${ROLE_LABEL[x]}</option>`).join('');
+const groupOpts = g => `<option value="">No bacenta</option>${S.groups.map(x => `<option value="${esc(x.id)}" ${x.id === g ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`;
+const joinedThisWeek = u => Date.parse(u.createdAt) > Date.now() - 7 * 864e5;
+const needsBacenta = u => !u.group && u.role !== 'pastor';
+function rolePill(u) {
+  if (u.role === 'pastor') return '<span class="pill ok">Pastor</span>';
+  if (u.role === 'leader') return `<span class="pill new">Leader</span>`;
+  if (!u.group) return '<span class="pill due">No bacenta</span>';
+  return '<span class="pill">Member</span>';
+}
+function roleForm(u) {
+  const self = u.id === uid();
+  return `<form class="card role-form" data-user="${u.id}" novalidate>
+    <div class="row"><div class="avatar">${initials(u.name)}</div><div class="stack grow"><strong class="ellipsis">${esc(u.name)}${self ? ' (you)' : ''}</strong>
+      <span class="small muted ellipsis">${esc(u.email || '')}${u.phone ? ' · ' + esc(u.phone) : ''}</span>
+      <span class="small muted">Joined ${fmt(u.createdAt)}${joinedThisWeek(u) && !self ? ' · new' : ''}${u.group ? ' · ' + esc(groupName(u.group)) : ''}</span></div>${rolePill(u)}</div>
+    <div class="user-row"><select class="input" id="role-${u.id}" name="role" aria-label="Role for ${esc(u.name)}" ${self ? 'disabled' : ''}>${roleOpts(u.role)}</select>
+      <select class="input" id="grp-${u.id}" name="group" aria-label="Bacenta for ${esc(u.name)}">${groupOpts(u.group)}</select><button class="btn sm">Save</button></div></form>`;
+}
+function newPeopleCard() {
+  if (me().role !== 'pastor' || !S.users.length) return '';
+  const fresh = S.users.filter(u => u.id !== uid() && joinedThisWeek(u)).length, waiting = S.users.filter(needsBacenta).length;
+  if (!fresh && !waiting) return '';
+  return `<section class="card"><div class="row"><div class="tile-ico green">${ic('users')}</div><div class="stack grow"><strong>${S.users.length} ${S.users.length === 1 ? 'person has' : 'people have'} joined the app</strong>
+    <span class="small muted">${fresh ? `${fresh} new this week` : ''}${fresh && waiting ? ' · ' : ''}${waiting ? `${waiting} not in a bacenta yet` : ''}</span></div></div>
+    <button class="btn" data-go="roles">Assign roles and bacentas</button></section>`;
+}
+function rolesScreen() {
+  const all = S.users.slice().sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
+  const q = rolesQuery.toLowerCase();
+  const pass = u => rolesFilter === 'All' || (rolesFilter === 'New this week' && joinedThisWeek(u)) || (rolesFilter === 'No bacenta' && needsBacenta(u))
+    || (rolesFilter === 'Leaders' && u.role === 'leader') || (rolesFilter === 'Members' && u.role === 'member');
+  const list = all.filter(u => pass(u) && (!q || `${u.name} ${u.email || ''} ${u.phone || ''}`.toLowerCase().includes(q)));
+  return `${header('People & roles', 'home')}
+    <div class="stats">
+      <div class="stat"><b>${all.length}</b><span>In the app</span></div>
+      <div class="stat"><b style="color:var(--blue)">${all.filter(u => u.role === 'leader').length}</b><span>Leaders</span></div>
+      <div class="stat"><b style="color:var(--amber)">${all.filter(needsBacenta).length}</b><span>No bacenta</span></div>
+    </div>
+    ${S.groups.length ? '' : `<div class="alert" role="status"><div class="row">${ic('alert')}<div class="stack"><strong>Add your bacentas first</strong><span class="small">You need at least one bacenta before you can make someone a leader or put people in a bacenta.</span></div></div><div><button class="btn sm" data-go="admin">Add bacentas</button></div></div>`}
+    <div class="row" style="position:relative"><span style="position:absolute;left:12px;color:var(--muted);display:flex">${ic('search')}</span>
+      <input class="input" id="roles-search" type="search" placeholder="Search by name, email or phone" value="${esc(rolesQuery)}" style="padding-left:40px" aria-label="Search people"></div>
+    <div class="chips">${['All', 'New this week', 'No bacenta', 'Leaders', 'Members'].map(f => `<button class="chip" data-rfilter="${f}" aria-pressed="${f === rolesFilter}">${f}</button>`).join('')}</div>
+    <p class="small muted">Everyone who creates an account appears here straight away. Choose a role and a bacenta, then tap <strong>Save</strong>. A leader needs a bacenta.</p>
+    ${list.map(roleForm).join('') || empty(all.length ? 'Nobody matches this search.' : 'Nobody has created an account yet. Share the app link with the church.')}`;
+}
+
 /* ---------- admin (pastor) ---------- */
 function adminScreen() {
-  const st = S.settings; const roleOpts = r => ['member', 'leader', 'pastor'].map(x => `<option value="${x}" ${x === r ? 'selected' : ''}>${ROLE_LABEL[x]}</option>`).join('');
-  const groupOpts = g => `<option value="">No bacenta</option>${S.groups.map(x => `<option value="${esc(x.id)}" ${x.id === g ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`;
-  const users = S.users.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const st = S.settings;
   return `${header('Church admin', 'home')}
     <form id="settings-form" class="card" novalidate><h2>Church details</h2>
       <div class="field"><label for="st-name">Church name</label><input class="input" id="st-name" value="${esc(st.churchName || CHURCH.name)}"></div>
@@ -872,9 +934,8 @@ function adminScreen() {
     <section class="card"><h2>Bacentas</h2>
       <div class="list">${S.groups.map(g => `<div class="li"><div class="stack grow"><strong>${esc(g.name)}</strong><span class="small muted">${esc(g.zone || 'No area')} · ${esc(g.leaderName || 'No leader yet')}</span></div>${delBtn('group:' + g.id)}</div>`).join('') || '<p class="small muted">No bacentas yet.</p>'}</div>
       <form id="group-form" class="stack" style="gap:10px" novalidate><div class="grid2"><input class="input" id="gr-name" placeholder="Bacenta name" aria-label="Bacenta name"><input class="input" id="gr-zone" placeholder="Area, e.g. Kasoa" aria-label="Area"></div><button class="btn ghost">Add bacenta</button></form></section>
-    <section class="card"><h2>People & roles</h2><p class="small muted">Make someone a leader by choosing Bacenta Leader and their bacenta.</p>
-      ${users.map(u => `<form class="stack role-form" data-user="${u.id}" style="gap:8px;border-top:1px solid var(--line);padding-top:12px" novalidate><div class="stack"><strong>${esc(u.name)}${u.id === uid() ? ' (you)' : ''}</strong><span class="small muted">${esc(u.email || '')}${u.phone ? ' · ' + esc(u.phone) : ''}</span></div>
-        <div class="user-row"><select class="input" name="role" aria-label="Role" ${u.id === uid() ? 'disabled' : ''}>${roleOpts(u.role)}</select><select class="input" name="group" aria-label="Bacenta">${groupOpts(u.group)}</select><button class="btn sm">Save</button></div></form>`).join('')}</section>
+    <section class="card"><div class="row"><div class="tile-ico green">${ic('users')}</div><div class="stack grow"><h2>People & roles</h2><span class="small muted">${S.users.length} in the app · ${S.users.filter(needsBacenta).length} not in a bacenta yet</span></div></div>
+      <button class="btn" data-go="roles">Assign roles and bacentas</button></section>
     <section class="card"><h2>Reported posts</h2>${S.flags.length ? `<div class="list">${S.flags.map(f => { const post = S.board.find(b => b.id === f.postId); return `<div class="li" style="align-items:flex-start"><div class="stack grow"><span class="small"><strong>Reason:</strong> ${esc(f.reason)}</span><span class="small muted">${post ? esc(post.body.slice(0, 140)) : 'Post already deleted'}${post?.removed ? ' · removed' : ''}</span>
       <div class="row" style="gap:8px;margin-top:6px">${post && !post.removed ? delBtn('remove:' + post.id, 'Remove post') : ''}<button class="btn sm ghost" data-dismissflag="${f.id}">Dismiss</button></div></div></div>`; }).join('')}</div>` : '<p class="small muted">Nothing reported.</p>'}</section>`;
 }
@@ -885,7 +946,7 @@ function moreScreen() {
     ? [['devotion', 'Daily devotion', 'bible'], ['board', 'Ask & Share', 'talk'], ['prayer', 'Prayer wall', 'msg'], ['sermons', 'Sermon notes', 'book'], ['events', 'Events', 'cal'], ['progress', 'My progress', 'target'], ['giving', 'Giving', 'heart'], ['announcements', 'Announcements', 'bell'], ['guide', 'Field guide', 'book']]
     : [['devotion', 'Daily devotion', 'bible'], ['board', 'Ask & Share', 'talk'], ['prayer', 'Prayer wall', 'msg'], ['sermons', 'Sermon notes', 'book'], ['announcements', 'Announcements', 'bell'], ['attendance', 'Church attendance', 'clip'], [p.role === 'pastor' ? 'reports' : 'report', 'Reports', 'file'], ['health', 'Ministry health', 'chart'], ['events', 'Events', 'cal'], ['giving', 'Giving', 'heart'], ['progress', 'My progress', 'target'], ['guide', 'Field guide', 'book']];
   links.splice(1, 0, ['meetings', 'Prayer meetings', 'cal']); if (p.role !== 'member') links.splice(2, 0, ['prayerreport', 'Prayer report', 'chart']);
-  if (p.role === 'pastor') links.unshift(['admin', 'Church admin', 'gear']);
+  if (p.role === 'pastor') links.unshift(['roles', 'People & roles', 'users'], ['admin', 'Church admin', 'gear']);
   const ios = isIOS && !isStandalone();
   return `${header('More')}
     <section class="card"><div class="row"><div class="avatar" style="width:52px;height:52px;font-size:16px">${initials(p.name)}</div><div class="stack grow"><strong style="font-size:17px">${esc(p.name)}</strong><span class="small muted">${ROLE_LABEL[p.role]}${p.group ? ' · ' + esc(groupName(p.group)) : ''}</span><span class="small muted">${esc(p.email || S.user.email)}</span></div><button class="btn sm ghost" data-sheet="profile">Edit</button></div></section>
@@ -1014,7 +1075,7 @@ function sheetHtml() {
 }
 
 /* ---------- render ---------- */
-const SCREENS = { home: hubScreen, mission: missionScreen, devotion: devotionScreen, prayer: prayerScreen, sermons: sermonsScreen, board: boardScreen, people: peopleScreen, attendance: attendanceScreen, report: reportScreen, reports: reportsScreen, health: healthScreen, announcements: announcementsScreen, events: eventsScreen, giving: givingScreen, progress: progressScreen, guide: guideScreen, more: moreScreen, admin: adminScreen, meetings: meetingsScreen, prayroom: prayRoomScreen, prayerreport: prayerReportScreen };
+const SCREENS = { home: hubScreen, mission: missionScreen, devotion: devotionScreen, prayer: prayerScreen, sermons: sermonsScreen, board: boardScreen, people: peopleScreen, attendance: attendanceScreen, report: reportScreen, reports: reportsScreen, health: healthScreen, announcements: announcementsScreen, events: eventsScreen, giving: givingScreen, progress: progressScreen, guide: guideScreen, more: moreScreen, admin: adminScreen, roles: rolesScreen, meetings: meetingsScreen, prayroom: prayRoomScreen, prayerreport: prayerReportScreen };
 const STAFF_ONLY = ['mission', 'people', 'attendance', 'report', 'reports', 'health', 'prayerreport'];
 function render() {
   // Keep typing focus, unsaved field values and sheet scroll when live data re-renders the page.
@@ -1034,7 +1095,7 @@ function screenHtml() {
   if (!S.profileLoaded || (creatingProfile && !S.profile)) return '<div class="loading">Loading your ministry…</div>';
   if (!S.profile) return profileSetupScreen();
   const p = me(); const tabs = TABS[p.role] || TABS.member;
-  if (!SCREENS[tab] || (p.role === 'member' && STAFF_ONLY.includes(tab)) || (tab === 'admin' && p.role !== 'pastor')) tab = 'home';
+  if (!SCREENS[tab] || (p.role === 'member' && STAFF_ONLY.includes(tab)) || (['admin', 'roles'].includes(tab) && p.role !== 'pastor')) tab = 'home';
   const active = tabs.some(t => t[0] === tab) ? tab : (['attendance', 'reports', 'report', 'health'].includes(tab) && tabs.some(t => t[0] === 'mission') ? 'mission' : 'home');
   return `<main class="app">${SCREENS[tab]()}</main>
     <button class="fab" data-sheet="quick" aria-label="Quick actions">${ic('plus')}</button>
@@ -1069,6 +1130,7 @@ root.addEventListener('input', e => {
   const el = e.target; if (el.id) el.dataset.dirty = '1';
   if (el.id === 'people-search') { peopleQuery = el.value; render(); }
   if (el.id === 'guide-search') { guideQuery = el.value; render(); }
+  if (el.id === 'roles-search') { rolesQuery = el.value; render(); }
 });
 
 root.addEventListener('click', async e => {
@@ -1113,6 +1175,7 @@ root.addEventListener('click', async e => {
   if (d.mreport) { openSheet({ type: 'mreport', id: d.mreport, date: todayKey(), rows: null }); return loadMeetingReport(); }
   if (d.mdate) { sheet.date = d.mdate; sheet.rows = null; render(); return loadMeetingReport(); }
   if (d.pause) { const m = S.meetings.find(x => x.id === d.pause); return run(sb.from('prayer_meetings').update({ active: !m.active }).eq('id', m.id), m.active ? 'Prayer meeting paused' : 'Prayer meeting resumed', 'meetings', 'prayerStats'); }
+  if (d.rfilter) { rolesFilter = d.rfilter; return render(); }
   if (d.rweek) { reportWeek = +d.rweek; return render(); }
   if (d.dismissflag) return run(sb.from('flags').delete().eq('id', d.dismissflag), 'Report dismissed', 'flags');
   switch (d.act) {
@@ -1256,7 +1319,16 @@ async function handleSubmit(f) {
   if (f.classList.contains('role-form')) return lock(async () => {
     const id = f.dataset.user; const u = S.users.find(x => x.id === id);
     const role = id === uid() ? u.role : f.elements.role.value; const group = f.elements.group.value;
-    await run(sb.rpc('set_role', { target: id, new_role: role, new_group: orNull(group) }), `${u.name} is now ${role === 'member' ? 'a member' : 'a ' + ROLE_LABEL[role]}`, 'users', 'groups', 'profile');
+    if (role === 'leader' && !group) return toast('Choose a bacenta for this leader first.');
+    const ok = await run(sb.rpc('set_role', { target: id, new_role: role, new_group: orNull(group) }), null, 'users', 'groups', 'profile');
+    if (!ok) return;
+    // Put them on that bacenta's roster too, so their leader sees them for attendance.
+    const m = S.members.find(x => x.self_uid === id);
+    if (group && (!m || m.group !== group)) {
+      await run(m ? sb.from('members').update({ group_id: group }).eq('id', m.id)
+        : sb.from('members').insert({ name: u.name, phone: u.phone || '', group_id: group, status: 'New', self_uid: id, joined: new Date(u.createdAt || Date.now()).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) }), null, 'members');
+    }
+    toast(`Saved. ${u.name.split(' ')[0]} is ${role === 'member' ? 'a member' : 'a ' + ROLE_LABEL[role]}${group ? ' in ' + groupName(group) : ''}.`);
   });
 }
 
