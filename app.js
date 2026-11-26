@@ -38,7 +38,7 @@ const P = {
 const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 const initials = n => String(n || '?').split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
-const money = n => CHURCH.currency + Number(n || 0).toLocaleString('en-GH');
+const money = n => { const v = Number(n || 0); return CHURCH.currency + v.toLocaleString(CHURCH.locale || 'en-ZA', { minimumFractionDigits: v % 1 ? 2 : 0, maximumFractionDigits: 2 }); };
 
 /* ---------- dates ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -422,7 +422,7 @@ function loginScreen() {
     ${authNotice ? `<div class="alert" role="status"><strong>Check your email</strong><span class="small">${esc(authNotice)}</span></div>` : ''}
     <form id="${up ? 'signup-form' : 'login-form'}" class="card" novalidate>
       ${up ? `<div class="field"><label for="su-name">Full name</label><input class="input" id="su-name" autocomplete="name" required></div>
-        <div class="field"><label for="su-phone">Phone</label><input class="input" id="su-phone" inputmode="tel" autocomplete="tel" placeholder="024 000 0000"></div>
+        <div class="field"><label for="su-phone">Phone</label><input class="input" id="su-phone" inputmode="tel" autocomplete="tel" placeholder="082 000 0000"></div>
         <div class="field"><label for="su-group">Your bacenta</label><select class="input" id="su-group"><option value="">I don’t know yet</option>${S.groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select></div>` : ''}
       <div class="field"><label for="au-email">Email</label><input class="input" id="au-email" type="email" autocomplete="username" placeholder="you@example.com"></div>
       <div class="field"><label for="au-pass">Password</label><input class="input" id="au-pass" type="password" autocomplete="${up ? 'new-password' : 'current-password'}" placeholder="${up ? 'At least 6 characters' : 'Password'}"></div>
@@ -830,8 +830,8 @@ function givingScreen() {
   const momo = S.settings.momo;
   return `${header('Giving', 'home')}
     <div class="stats" style="grid-template-columns:1fr 1fr"><div class="stat"><b style="color:var(--green)">${money(month)}</b><span>This month</span></div><div class="stat"><b>${money(year)}</b><span>This year</span></div></div>
-    ${momo ? `<section class="card"><div class="stack"><strong>Give by Mobile Money</strong><span class="small muted">${esc(S.settings.momoName || 'Church Mobile Money number')}</span></div>
-      <div class="row between"><code style="font-size:17px;font-weight:700" id="momo">${esc(momo)}</code><button class="btn sm ghost" data-act="copyMomo">Copy</button></div></section>` : ''}
+    ${momo ? `<section class="card"><div class="stack"><strong>How to give</strong><span class="small muted">${esc(S.settings.momoName || 'Church banking details')}</span></div>
+      <div class="row between"><code style="font-size:17px;font-weight:700;white-space:pre-line" id="momo">${esc(momo)}</code><button class="btn sm ghost" data-act="copyMomo">Copy</button></div></section>` : ''}
     <section class="card"><div class="row between"><h2>My giving record</h2><button class="btn sm" data-sheet="gift">Log a gift</button></div><p class="small muted">A private record for you. Only you can see it.</p>
       <div class="list">${list.map(g => `<div class="li"><div class="tile-ico green" style="width:38px;height:38px">${ic('heart')}</div><div class="stack grow"><strong>${esc(g.type)}</strong><span class="small muted">${esc(g.date)}</span></div><strong class="num">${money(g.amount)}</strong></div>`).join('') || empty('Gifts you log will appear here.')}</div></section>`;
 }
@@ -1054,7 +1054,7 @@ const PASSWORD_WORDS = ['grace', 'faith', 'hope', 'light', 'peace', 'glory', 'zi
 const newPassword = () => `${PASSWORD_WORDS[Math.floor(Math.random() * PASSWORD_WORDS.length)]}-${Math.floor(1000 + Math.random() * 9000)}`;
 const appLink = () => location.origin + location.pathname;
 const loginMessage = a => `Hello ${a.name.split(' ')[0]}, you've been added to the ${churchName()} app 🙏\n\nOpen: ${appLink()}\nEmail: ${a.email}\nPassword: ${a.password}\n\nAfter you sign in, go to More → Change password.`;
-function whatsappLink(a) { let d = (a.phone || '').replace(/\D/g, ''); if (d.startsWith('0')) d = '233' + d.slice(1); return `https://wa.me/${d}?text=${encodeURIComponent(loginMessage(a))}`; }
+function whatsappLink(a) { let d = (a.phone || '').replace(/\D/g, ''); if (d.startsWith('0')) d = (CHURCH.countryCode || '27') + d.slice(1); return `https://wa.me/${d}?text=${encodeURIComponent(loginMessage(a))}`; }
 // Creates the person's login without signing the pastor out (a separate, throwaway sign-in client).
 async function createAccount({ name, email, phone, group, password }) {
   const tmp = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'scc-add-person' } });
@@ -1091,15 +1091,15 @@ function adminScreen() {
   return `${header('Church admin', 'home')}
     <form id="settings-form" class="card" novalidate><h2>Church details</h2>
       <div class="field"><label for="st-name">Church name</label><input class="input" id="st-name" value="${esc(st.churchName || CHURCH.name)}"></div>
-      <div class="grid2"><div class="field"><label for="st-momo">Mobile Money number</label><input class="input" id="st-momo" value="${esc(st.momo || '')}" placeholder="024 000 0000"></div>
-      <div class="field"><label for="st-momoname">Account name</label><input class="input" id="st-momoname" value="${esc(st.momoName || '')}"></div></div>
+      <div class="grid2"><div class="field"><label for="st-momo">Giving details (bank account, SnapScan or reference)</label><textarea class="input" id="st-momo" placeholder="Bank: FNB&#10;Account: 62000000000&#10;Branch code: 250655&#10;Reference: your name">${esc(st.momo || '')}</textarea></div>
+      <div class="field"><label for="st-momoname">Short title, e.g. FNB · Serious Christian Church</label><input class="input" id="st-momoname" value="${esc(st.momoName || '')}"></div></div>
       <div class="field"><label for="st-camp">Outreach campaign name</label><input class="input" id="st-camp" value="${esc(st.campaignName || '')}" placeholder="Road to 10,000"></div>
       <div class="grid2"><div class="field"><label for="st-goal">Campaign goal</label><input class="input num" id="st-goal" type="number" min="0" value="${esc(st.campaignGoal || '')}"></div>
       <div class="field"><label for="st-reached">Souls reached so far</label><input class="input num" id="st-reached" type="number" min="0" value="${esc(st.campaignReached || 0)}"></div></div>
       <button class="btn">Save church details</button></form>
     <section class="card"><h2>Bacentas</h2>
       <div class="list">${S.groups.map(g => `<div class="li"><div class="stack grow"><strong>${esc(g.name)}</strong><span class="small muted">${esc(g.zone || 'No area')} · ${esc(g.leaderName || 'No leader yet')}</span></div>${delBtn('group:' + g.id)}</div>`).join('') || '<p class="small muted">No bacentas yet.</p>'}</div>
-      <form id="group-form" class="stack" style="gap:10px" novalidate><div class="grid2"><input class="input" id="gr-name" placeholder="Bacenta name" aria-label="Bacenta name"><input class="input" id="gr-zone" placeholder="Area, e.g. Kasoa" aria-label="Area"></div><button class="btn ghost">Add bacenta</button></form></section>
+      <form id="group-form" class="stack" style="gap:10px" novalidate><div class="grid2"><input class="input" id="gr-name" placeholder="Bacenta name" aria-label="Bacenta name"><input class="input" id="gr-zone" placeholder="Area, e.g. Soweto" aria-label="Area"></div><button class="btn ghost">Add bacenta</button></form></section>
     <section class="card"><div class="row"><div class="tile-ico green">${ic('users')}</div><div class="stack grow"><h2>People & roles</h2><span class="small muted">${S.users.length} in the app · ${S.users.filter(needsBacenta).length} not in a bacenta yet</span></div></div>
       <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" data-go="roles">Assign roles and bacentas</button><button class="btn ghost" data-go="positions">Roles & responsibilities</button><button class="btn ghost" data-go="duties">Duties</button></div></section>
     ${reportedPostsCard()}`;
@@ -1160,7 +1160,7 @@ function sheetHtml() {
   } else if (t === 'addMember') {
     body = `<h2>Add a member</h2><form id="add-form" class="stack" style="gap:12px" novalidate>
       <div class="field"><label for="am-name">Full name</label><input class="input" id="am-name"></div>
-      <div class="grid2"><div class="field"><label for="am-phone">Phone</label><input class="input" id="am-phone" inputmode="tel" placeholder="024 000 0000"></div>
+      <div class="grid2"><div class="field"><label for="am-phone">Phone</label><input class="input" id="am-phone" inputmode="tel" placeholder="082 000 0000"></div>
       <div class="field"><label for="am-bday">Birthday (optional)</label><input class="input" id="am-bday" type="date"></div></div>
       ${p.role === 'pastor' ? `<div class="field"><label for="am-group">Bacenta</label><select class="input" id="am-group">${S.groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}</select></div>` : ''}
       <p class="err" id="am-err" hidden></p><button class="btn block">Add member</button></form>`;
@@ -1269,7 +1269,7 @@ function sheetHtml() {
       <form id="addperson-form" class="stack" style="gap:12px" novalidate>
       <div class="field"><label for="ap-name">Full name</label><input class="input" id="ap-name" autocomplete="off"></div>
       <div class="grid2"><div class="field"><label for="ap-email">Email</label><input class="input" id="ap-email" type="email" autocomplete="off" placeholder="name@example.com"></div>
-      <div class="field"><label for="ap-phone">Phone</label><input class="input" id="ap-phone" inputmode="tel" placeholder="024 000 0000"></div></div>
+      <div class="field"><label for="ap-phone">Phone</label><input class="input" id="ap-phone" inputmode="tel" placeholder="082 000 0000"></div></div>
       <div class="field"><label for="ap-pass">Starting password</label><input class="input" id="ap-pass" value="${newPassword()}" autocomplete="off"></div>
       <div class="grid2"><div class="field"><label for="ap-role">Access level</label><select class="input" id="ap-role">${roleOpts('member')}</select></div>
       <div class="field"><label for="ap-group">Bacenta</label><select class="input" id="ap-group">${groupOpts('')}</select></div></div>

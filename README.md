@@ -57,7 +57,7 @@ Every change pushed to `main` goes live within a minute or two. To edit a file o
 
 As the pastor, open **More → Church admin**:
 
-1. **Church details:** church name, Mobile Money number for giving, and the outreach campaign (for example "Road to 10,000").
+1. **Church details:** church name, giving details (bank account or SnapScan), and the outreach campaign (for example "Road to 10,000").
 2. **Bacentas:** add each bacenta with its area.
 3. Share the app link with your leaders. They **create accounts** and choose their bacenta.
 4. In **People & roles**, set each leader's role to **Bacenta Leader**, pick their bacenta, and tap **Save**.

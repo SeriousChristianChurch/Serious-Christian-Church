@@ -3,11 +3,11 @@
 -- It adds to the existing database; it does not change or remove anything already there.
 
 -- Church time zone, used to know when a prayer meeting is "on".
-alter table public.settings add column if not exists tz text not null default 'Africa/Accra';
+alter table public.settings add column if not exists tz text not null default 'Africa/Johannesburg';
 
 create or replace function public.church_tz() returns text
 language sql stable security definer set search_path = public as $$
-  select coalesce((select tz from settings where id = 1), 'Africa/Accra')
+  select coalesce((select tz from settings where id = 1), 'Africa/Johannesburg')
 $$;
 
 -- =========================================================
