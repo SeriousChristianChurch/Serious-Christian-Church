@@ -17,6 +17,7 @@ It runs on **Supabase** (database and sign-in) and **GitHub Pages** (the website
 3. Open the file `supabase/schema.sql` from this folder, copy **all** of it, and paste it into the editor.
 4. Click **Run**. You should see "Success. No rows returned".
 5. Then open a **new, empty** query, paste all of `supabase/prayer-update.sql`, and click **Run**. This adds prayer meetings, the prayer report and app time.
+6. Then do the same with `supabase/admin-update.sql`. This adds church roles, responsibilities and duties.
 
 This creates every table and the security rules that control who can see what.
 
@@ -81,6 +82,17 @@ It gets its own icon, opens full screen, and updates live when leaders and the p
 - **Prayer report:** shows, week by week, a graph of who prayed and who didn't, minutes spent in prayer, and for each person: meetings joined, days they ticked "Pray", and time spent in the app. "Prayed" means they joined a meeting or ticked "Pray" that week. People are only counted from the week they created their account.
 - **Reminders:** "Add to my calendar" puts the meeting in the phone's calendar with a reminder 10 minutes before.
 - The pastor sees everyone; a leader sees their own bacenta. Members are told this in the prayer room and on the More screen.
+
+## Roles, responsibilities and duties
+
+- **Access level** (set in People & roles): **Pastor** sees and manages everything; **Bacenta Leader** manages their own bacenta; **Member** uses the app for themselves.
+- **Church roles** (More → Roles & responsibilities): the pastor creates roles such as Usher, Media Team, Secretary or Treasurer, writes what each is responsible for, and ticks what each may do in the app:
+  manage people, give duties, church announcements, events, sermons, prayer meetings, prayer report, church reports, membership, and Ask & Share moderation.
+  "Add these roles" creates eight common church roles to start from.
+- **Put people in roles:** on a role, tap **Choose people**; or on a person (People & roles → Edit roles & details) tick their roles.
+- **Add a person:** People & roles → **Add a person** creates their account with a starting password and shows a message to send them (copy, or send on WhatsApp). They can change it under More → Change password.
+- **Duties:** More → Duties → **Give a duty** to one person or to everyone in a role, with an optional due date. People see their duties on Home and tap **Done**; the pastor sees what's done and what's overdue.
+- A role with **Manage people** (for example Church Administrator) can add people, set Member or Bacenta Leader, and give out roles, but only the pastor can make someone a pastor or change what a role is allowed to do.
 
 ## Who can see what
 

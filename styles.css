@@ -184,3 +184,5 @@ textarea.input { min-height: 90px; resize: vertical; }
 .day-chip input { margin: 0; accent-color: var(--accent); }
 .day-chip:has(input:checked) { border-color: var(--accent); color: var(--fg); }
 @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+
+a.btn { text-decoration: none; }
