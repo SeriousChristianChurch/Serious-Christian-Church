@@ -6,6 +6,6 @@ export const SUPABASE_KEY = 'sb_publishable_FhHYd-QmlJSosB3AJWlZQg_eRlrUeju';
 // Church defaults. The pastor can change the name, Mobile Money number and campaign inside the app (More → Church admin).
 export const CHURCH = {
   name: 'Serious Christian Church',
-  currency: 'GH₵',
+  currency: 'R',
   emergencyNumber: '112'
 };
